@@ -1027,14 +1027,47 @@ function exportPDF() {
   function wrapText(str, fontPx, maxW){ ctx.font=fontPx+'px '+FONT; const lines=[]; let line=''; for(const ch of str){ if(ch==='\n'){ lines.push(line); line=''; continue; } const t=line+ch; if(ctx.measureText(t).width>maxW && line){ lines.push(line); line=ch; } else line=t; } if(line) lines.push(line); return lines; }
   function paragraph(s, sizeMM, color){ const fp=sizeMM*SCALE, maxW=W-2*MX; wrapText(s, fp, maxW).forEach(l=>drawLine(l, sizeMM, false, color)); }
   function drawTable(headers, rows, colWmm, sizeMM){
-    const fh=sizeMM*1.5*SCALE+6*SCALE, fp=sizeMM*SCALE, pad=3*SCALE;
+    const pad=2*SCALE;
+    const fh=sizeMM*1.5*SCALE+6*SCALE;
     const xs=[]; let acc=MX; for(const w of colWmm){ xs.push(acc); acc+=w*SCALE; } const totalW=acc-MX;
-    function headerRow(){ ensure(fh); ctx.fillStyle='#2563eb'; ctx.fillRect(MX,y,totalW,fh); ctx.fillStyle='#fff'; ctx.font='bold '+fp+'px '+FONT; for(let i=0;i<headers.length;i++) ctx.fillText(headers[i], xs[i]+pad, y+(fh-fp)/2); y+=fh; }
+    const colWpx=colWmm.map(w=>w*SCALE);
+    const minF=4*SCALE;
+    // 单元格文字若超出列宽：先逐 0.5mm 缩小字号，最小 4mm；仍不够则按省略号截断，杜绝跨列重叠
+    function fitCell(text, colIdx, bold){
+      const avail=colWpx[colIdx]-2*pad;
+      let s=String(text==null?'':text);
+      let f=sizeMM*SCALE;
+      ctx.font=(bold?'bold ':'')+f+'px '+FONT;
+      if(ctx.measureText(s).width<=avail) return {text:s,size:f};
+      while(f>minF){
+        f-=0.5*SCALE;
+        ctx.font=(bold?'bold ':'')+f+'px '+FONT;
+        if(ctx.measureText(s).width<=avail) return {text:s,size:f};
+      }
+      ctx.font=(bold?'bold ':'')+minF+'px '+FONT;
+      while(s.length>1 && ctx.measureText(s+'…').width>avail) s=s.slice(0,-1);
+      return {text:s+'…',size:minF};
+    }
+    function headerRow(){
+      ensure(fh);
+      ctx.fillStyle='#2563eb'; ctx.fillRect(MX,y,totalW,fh);
+      ctx.fillStyle='#fff';
+      for(let i=0;i<headers.length;i++){
+        const c=fitCell(headers[i],i,true);
+        ctx.font='bold '+c.size+'px '+FONT;
+        ctx.fillText(c.text, xs[i]+pad, y+(fh-c.size)/2);
+      }
+      y+=fh;
+    }
     headerRow();
     for(const row of rows){
       if(y+fh > MT+H-MB){ newPage(); headerRow(); }   // 跨页时重画表头
-      ctx.font=fp+'px '+FONT; ctx.fillStyle='#111';
-      for(let i=0;i<row.length;i++) ctx.fillText(String(row[i]==null?'':row[i]), xs[i]+pad, y+(fh-fp)/2);
+      for(let i=0;i<row.length;i++){
+        const c=fitCell(row[i],i,false);
+        ctx.font=c.size+'px '+FONT;
+        ctx.fillStyle='#111';
+        ctx.fillText(c.text, xs[i]+pad, y+(fh-c.size)/2);
+      }
       ctx.strokeStyle='#e2e8f0'; ctx.lineWidth=1;
       for(let i=0;i<=xs.length;i++){ const xx=i<xs.length?xs[i]:MX+totalW; ctx.beginPath(); ctx.moveTo(xx,y); ctx.lineTo(xx,y+fh); ctx.stroke(); }
       ctx.beginPath(); ctx.moveTo(MX,y); ctx.lineTo(MX+totalW,y); ctx.stroke();
@@ -1054,27 +1087,27 @@ function exportPDF() {
     y+=ph+8*SCALE;
   }
   newPage();
-  drawLine('集装箱装柜作业指引', 15, true);
-  drawLine('（Web 前端版 · 本地计算）', 10, false, '#64748b');
+  drawLine('集装箱装柜作业指引', 12, true);
+  drawLine('（Web 前端版 · 本地计算）', 8, false, '#64748b');
   const sumRows = result.containers.map((c,i) => ['柜'+(i+1), c.items.length, c.usedWeight.toFixed(0),
     (c.usedVol/1e9).toFixed(2), (c.loadRate*100).toFixed(1)+'%', c.usedWeight>c.spec.maxLoad?'超重':'正常']);
-  drawTable(['柜号','件数','总重(kg)','体积(m³)','装载率','状态'], sumRows, [28,22,34,32,32,42], 9);
-  drawLine('3D 装柜示意图', 13, true);
+  drawTable(['柜号','件数','总重(kg)','体积(m³)','装载率','状态'], sumRows, [20,18,32,30,26,64], 7);
+  drawLine('3D 装柜示意图', 11, true);
   drawImageBlock(190, 100);
-  drawLine('货物明细', 13, true);
+  drawLine('货物明细', 11, true);
   const detRows=[];
   result.containers.forEach((c,i) => c.items.forEach(b => detRows.push(['柜'+(i+1), b.name,
     b.L+'×'+b.W+'×'+b.H, b.x.toFixed(0)+','+b.y.toFixed(0)+','+b.z.toFixed(0), b.group||'-', b.isPallet?'是':'否'])));
-  drawTable(['柜号','名称','尺寸(mm)','坐标(x,y,z)','分组','托盘'], detRows, [18,54,40,56,12,10], 7.5);
-  drawLine('仓库作业说明', 13, true);
+  drawTable(['柜号','名称','尺寸(mm)','坐标(x,y,z)','分组','托盘'], detRows, [14,30,50,58,18,20], 5.5);
+  drawLine('仓库作业说明', 11, true);
   ['1. 按柜号顺序逐柜装柜，先装柜内里侧、底层货物。',
     '2. 优先级1(优先)货物置于柜内最里侧底层；优先级3(靠门)货物靠近柜门最后装入。',
     '3. 同分组货物尽量同柜，跨柜时以明细表为准。',
     '4. 托盘货物按「托盘长×宽」整托码放，注意托盘朝向与纸箱一致性。',
     '5. 装柜前核对清单尺寸/重量，出现超重或超体积告警须现场复核。',
-    '6. 本方案为模拟估算，实际装柜以现场操作为准。'].forEach(n=>paragraph('• '+n, 10));
+    '6. 本方案为模拟估算，实际装柜以现场操作为准。'].forEach(n=>paragraph('• '+n, 8.5));
   const allWarn=[]; result.warnings.forEach(w=>allWarn.push(w)); result.containers.forEach(c=>c.warnings.forEach(x=>allWarn.push('柜'+(c.index+1)+': '+x)));
-  if(allWarn.length){ drawLine('告警', 13, true, '#dc2626'); allWarn.forEach(w=>paragraph('[告警] '+w, 10, '#dc2626')); }
+  if(allWarn.length){ drawLine('告警', 11, true, '#dc2626'); allWarn.forEach(w=>paragraph('[告警] '+w, 8.5, '#dc2626')); }
   pages.push(canvas);
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF('p','mm','a4');

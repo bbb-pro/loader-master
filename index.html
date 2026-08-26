@@ -223,15 +223,15 @@ goodsBody.addEventListener('input', e => {
     g[f] = e.target.checked;
     if (f === 'isPallet') {
       card.classList.toggle('pallet-on', e.target.checked); // 勾选托盘即显示托盘字段
-      // 切换勾选后立刻显示/隐藏打托方案
-      refreshCardPalletPlan(card, g);
+      refreshCardPalletPlan(card, g); // 勾选为离散操作，立即刷新预览无卡顿风险
     }
   }
   else if (e.target.type === 'number') g[f] = parseFloat(e.target.value) || 0;
   else g[f] = e.target.value;
-  // 任何与打托相关的字段变化（箱长/宽 / 托盘长/宽）都重绘打托方案
-  if (['l','w','palletL','palletW'].includes(f)) refreshCardPalletPlan(card, g);
-  updateTheory();
+  // 关键修复：输入框实时改动不再「逐键重算」打托方案/理论容量（尺寸瞬态为0会触发除零死循环卡死）。
+  // 改为停止输入 500ms 后（或点「开始计算」时统一校验）再计算。
+  if (['l','w','palletL','palletW'].includes(f)) schedulePlanRefresh(card, g);
+  else updateTheoryDebounced();
 });
 goodsBody.addEventListener('click', e => {
   if (e.target.dataset.act === 'del') {
@@ -329,7 +329,8 @@ function packBrick(items, spec, gap, ORDER) {
   const inner = { x0:gx, x1:l-gx, y0:gy, y1:w-gy, z0:0, z1:h-gz };
 
   // 枚举最优行组合：rA 行用朝向 oA，rB 行用朝向 oB，约束 rA*oAW + rB*oBW ≤ w，求最大 perLayer
-  const ROW_MAX = Math.max(1, Math.floor(w / Math.min(pl, pw)));
+  const minPP = Math.min(pl, pw);
+  const ROW_MAX = minPP > 0 ? Math.max(1, Math.floor(w / minPP)) : 0;  // 防御：托盘尺寸为0时避免 w/0=Infinity 死循环
   const orients = [[pl,pw],[pw,pl]];
   let best = 0, bestPlan = null;
   for (const oA of orients) for (const oB of orients) {
@@ -613,6 +614,16 @@ function doCalc() {
   const gap = +document.getElementById('cgap').value;
   const items = buildItems();
   if (items.length === 0) { alert('请先录入有效货物'); return; }
+  // 校验托盘类货物：托盘必须能放下纸箱，放不下时给出明确提示而非卡死/产生非法结果
+  const palletBad = [];
+  for (const g of goods) {
+    if (!g.isPallet) continue;
+    const bl=+g.l, bw=+g.w, pl=+g.palletL, pw=+g.palletW;
+    if (!(pl>0 && pw>0 && bl>0 && bw>0)) { palletBad.push('• '+g.name+'：托盘或纸箱尺寸未填完整'); continue; }
+    const lay = palletLevelLayout(pl, pw, bl, bw);
+    if (!lay || lay.n === 0) palletBad.push('• '+g.name+'：托盘（'+pl+'×'+pw+'）放不下纸箱 '+Math.min(bl,bw)+'mm（宽/长均不足且无法旋转）');
+  }
+  if (palletBad.length) { alert('⚠ 打托配置有误，已停止计算：\n\n'+palletBad.join('\n')+'\n\n请修正托盘/纸箱尺寸后再点「开始计算」。'); return; }
   document.getElementById('calcState').textContent = '计算中…';
   setTimeout(() => {
     const t0 = performance.now();
@@ -1127,6 +1138,7 @@ function theoryCapacity(spec, gap, g) {
   if (g.isPallet) {
     const bl=+g.l, bw=+g.w, bh=+g.h;
     const pl=+g.palletL, pw=+g.palletW, per=Math.max(1,+g.perPallet||1), pH=Math.max(1,+g.palletH||150);
+    if (!(bl>0 && bw>0 && bh>0 && pl>0 && pw>0)) return null;  // 防御：尺寸未填/为0时直接返回，避免下方除零死循环
     // 整托高度按"交错码盘每层最多几箱"来算（与单托打托方案一致），而不是保守的单朝向。
     // 例：400×300 在 1200×1000 托盘上，单朝向 9 箱/层；交错码盘 10 箱/层（你的俯视图）→
     //    perPallet=30 时 30÷10=3 层 → 150+3×300=1050mm（旧算法 30÷9=4 层→1350mm 是错的）。
@@ -1139,7 +1151,8 @@ function theoryCapacity(spec, gap, g) {
     // 交错码盘容量：枚举「r1 行用朝向 A + r2 行用朝向 B」，求 r1*floor(L/uAL)+r2*floor(L/uBL) 最大, 约束 r1*uAW + r2*uBW ≤ W
     const orients = [[pl,pw],[pw,pl]];  // 两朝向(L沿柜, W沿柜)
     let best = 0;
-    const ROW_MAX = Math.max(1, Math.floor(W / Math.min(pl, pw)));
+    const minPP = Math.min(pl, pw);
+    const ROW_MAX = minPP > 0 ? Math.max(1, Math.floor(W / minPP)) : 0;  // 防御：托盘尺寸为0时避免 W/0=Infinity 死循环
     for (let r1 = 0; r1 <= ROW_MAX; r1++) {
       for (let r2 = 0; r2 <= ROW_MAX - r1; r2++) {
         for (const [uAL,uAW] of orients) {
@@ -1180,8 +1193,10 @@ function palletLevelLayout(palletL, palletW, boxL, boxW) {
   palletL = +palletL; palletW = +palletW;
   boxL = +boxL; boxW = +boxW;
   if (!(palletL > 0 && palletW > 0 && boxL > 0 && boxW > 0)) return null;
+  const minBox = Math.min(boxL, boxW);
+  if (minBox <= 0) return null;  // 防御：箱某边为0时，Math.floor(palletW/minBox) 会得 Infinity 并导致死循环卡死
   const orients = [[boxL, boxW], [boxW, boxL]];
-  const ROW_MAX = Math.max(1, Math.floor(palletW / Math.min(boxL, boxW)));
+  const ROW_MAX = Math.max(1, Math.floor(palletW / minBox));
   let best = null;
   for (let r1 = 0; r1 <= ROW_MAX; r1++) {
     for (let r2 = 0; r2 <= ROW_MAX - r1; r2++) {
@@ -1287,14 +1302,27 @@ function updateTheory() {
   else el.textContent='≈ '+cap.total+' 箱（'+cap.perLayer+'箱/层 × '+cap.layers+'层）';
 }
 
+// 防抖：输入框实时改动不再逐键重算（尺寸瞬态为0会触发除零死循环卡死），停止输入后统一刷新
+let _theoryTimer = null;
+function updateTheoryDebounced() {
+  clearTimeout(_theoryTimer);
+  _theoryTimer = setTimeout(updateTheory, 350);
+}
+let _planTimer = null, _planCtx = null;
+function schedulePlanRefresh(card, g) {
+  _planCtx = { card, g };
+  clearTimeout(_planTimer);
+  _planTimer = setTimeout(() => { const { card, g } = _planCtx; refreshCardPalletPlan(card, g); updateTheory(); }, 500);
+}
+
 /* ============ 事件绑定 ============ */
 document.getElementById('ctype').addEventListener('change', e => {
   const p = CONTAINER_PRESETS[e.target.value];
   if (p) { document.getElementById('cl').value=p.l; document.getElementById('cw').value=p.w;
-    document.getElementById('ch').value=p.h; document.getElementById('cm').value=p.maxLoad; }
-  updateTheory();
+    document.getElementById('ch').value=p.h;     document.getElementById('cm').value=p.maxLoad; }
+  updateTheoryDebounced();
 });
-['cl','cw','ch','cgap'].forEach(id => document.getElementById(id).addEventListener('input', updateTheory));
+['cl','cw','ch','cgap'].forEach(id => document.getElementById(id).addEventListener('input', updateTheoryDebounced));
 document.getElementById('btnAdd').onclick = () => { goods.push(defaultGood()); renderGoods(); updateTheory(); };
 document.getElementById('btnClear').onclick = () => { goods = []; renderGoods(); updateTheory(); };
 document.getElementById('btnTpl').onclick = downloadTemplate;

@@ -362,6 +362,7 @@ function packBrick(items, spec, gap, ORDER) {
   for (let z = 0; z < nLayer; z++) {
     for (let ri = 0; ri < rowsInfo.length; ri++) {
       const rd = rowsInfo[ri];
+      if (rd.n === 0) continue;  // 跳过最佳方案中 rA/rB=0 的"空朝向"行，避免生成越界槽位（修复：托盘宽2000时第二行溢出集装箱）
       const perRow = Math.floor(l / rd.o[0]);
       for (let xi = 0; xi < perRow; xi++) {
         slots.push({

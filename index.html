@@ -35,15 +35,15 @@
 </head>
 <body class="bg-slate-50 text-slate-800">
 <div class="max-w-[1700px] mx-auto p-4">
-  <h1 class="text-2xl font-bold mb-4">集装箱装柜计算工具 <span class="text-sm font-normal text-slate-500">（Web 前端版 · 本地计算）</span></h1>
-  <div class="flex gap-4 items-start">
+  <h1 class="text-2xl font-bold mb-4">集装箱装柜计算工具</h1>
+  <div class="flex flex-col lg:flex-row gap-4 items-start">
     <!-- 左：设置（集装箱配置 + 货物录入） -->
-    <div id="leftCol" class="w-[360px] shrink-0 self-start max-h-[calc(100vh-1.5rem)] overflow-y-auto space-y-4 pr-1">
+    <div id="leftCol" class="w-full lg:w-[360px] lg:shrink-0 lg:self-start lg:max-h-[calc(100vh-1.5rem)] lg:overflow-y-auto space-y-4 lg:pr-1">
 
       <!-- 集装箱配置 -->
       <section class="bg-white rounded-xl shadow p-4">
         <h2 class="font-semibold mb-3">1. 集装箱配置</h2>
-        <div class="grid grid-cols-2 gap-3 items-end">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
           <label class="text-sm">柜型
             <select id="ctype" class="mt-1 border rounded p-2 w-full">
               <option value="20GP">20GP</option>
@@ -68,7 +68,7 @@
           </label>
         </div>
         <div class="col-span-2 text-sm text-slate-700 bg-blue-50 border border-blue-100 rounded p-2">
-          📦 理论最大容量（紧贴摆放，与手动装柜一致）：<span id="theoryCap" class="font-semibold text-blue-700">录入纸箱尺寸后显示</span>
+          📦 理论最大容量：<span id="theoryCap" class="font-semibold text-blue-700">录入纸箱尺寸后显示</span>
         </div>
       </section>
 
@@ -100,7 +100,7 @@
     </div>
 
     <!-- 中：3D 预览 -->
-    <div class="flex-1 min-w-0 space-y-4">
+    <div class="w-full lg:flex-1 lg:min-w-0 space-y-4">
       <div id="emptyHint" class="bg-white rounded-xl shadow p-10 text-center text-slate-400 min-h-[480px] flex items-center justify-center">点击左侧「开始计算」后，在此显示 3D 预览</div>
       <section id="threeArea" class="hidden bg-white rounded-xl shadow p-4 relative">
         <h2 class="font-semibold mb-2">3. 3D 预览</h2>
@@ -114,10 +114,10 @@
     </div>
 
     <!-- 右：结果汇总 + 货物明细 -->
-    <div id="rightCol" class="w-[400px] shrink-0 self-start max-h-[calc(100vh-1.5rem)] overflow-y-auto space-y-4 pl-1">
+    <div id="rightCol" class="w-full lg:w-[400px] lg:shrink-0 lg:self-start lg:max-h-[calc(100vh-1.5rem)] lg:overflow-y-auto space-y-4 lg:pl-1">
       <section id="summaryArea" class="hidden bg-white rounded-xl shadow p-4">
         <h2 class="font-semibold mb-2">4. 结果汇总</h2>
-        <div id="summary" class="grid grid-cols-2 gap-3 text-sm"></div>
+        <div id="summary" class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm"></div>
         <div id="warnings" class="mt-3 space-y-1 text-sm text-rose-600"></div>
         <div id="tabs" class="flex flex-wrap gap-2 mt-3"></div>
       </section>
@@ -1089,7 +1089,6 @@ function exportPDF() {
   }
   newPage();
   drawLine('集装箱装柜作业指引', 12, true);
-  drawLine('（Web 前端版 · 本地计算）', 8, false, '#64748b');
   const sumRows = result.containers.map((c,i) => ['柜'+(i+1), c.items.length, c.usedWeight.toFixed(0),
     (c.usedVol/1e9).toFixed(2), (c.loadRate*100).toFixed(1)+'%', c.usedWeight>c.spec.maxLoad?'超重':'正常']);
   drawTable(['柜号','件数','总重(kg)','体积(m³)','装载率','状态'], sumRows, [20,18,32,30,26,64], 7);
@@ -1122,7 +1121,7 @@ function exportPDF() {
 // 不同行可交替方向，已知最优为：1行长边沿L + 1行短边沿L（典型：40HQ+1200×1000托盘 = 10 + 12 = 22托/层）。
 // 普通纸箱沿用「单一朝向」最大（已为最佳）。
 function theoryCapacity(spec, gap, g) {
-  const L=+spec.l, W=+spec.w, H=+spec.h;   // 直接用内径，紧贴摆放
+  const L=+spec.l, W=+spec.w, H=+spec.h;   // 直接用集装箱内径计算
   if (!(L>0 && W>0 && H>0)) return null;
   if (g.isPallet) {
     const bl=+g.l, bw=+g.w, bh=+g.h;

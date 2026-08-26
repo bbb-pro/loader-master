@@ -1198,6 +1198,8 @@ function palletLevelLayout(palletL, palletW, boxL, boxW) {
   const orients = [[boxL, boxW], [boxW, boxL]];
   const ROW_MAX = Math.max(1, Math.floor(palletW / minBox));
   let best = null;
+  // === 1) 行式交错：每个"行"用同一种朝向、沿 W 方向延伸（成行切深度） ===
+  // 典型：400×300 在 1200×1000 托盘 = 10 个/层（你截图的算法）。
   for (let r1 = 0; r1 <= ROW_MAX; r1++) {
     for (let r2 = 0; r2 <= ROW_MAX - r1; r2++) {
       for (const [uL, uW] of orients) {
@@ -1207,8 +1209,26 @@ function palletLevelLayout(palletL, palletW, boxL, boxW) {
           const n1 = r1 * Math.floor(palletL / uL);
           const n2 = r2 * Math.floor(palletL / vL);
           const n = n1 + n2;
-          if (!best || n > best.n) best = { rA: r1, rB: r2, oA: [uL, uW], oB: [vL, vW], n, depth };
+          if (!best || n > best.n) best = { rA: r1, rB: r2, oA: [uL, uW], oB: [vL, vW], n, depth, pattern: 'row' };
         }
+      }
+    }
+  }
+  // === 2) 田字(pinwheel)交错：A 朝向在 TL+BR、B 朝向在 TR+BL，行列都错开 ===
+  // 典型：600×450 在 1100×1100 托盘 → 4 个/层（人工打托图是田字）。
+  // 一个 pinwheel 块 = (aL+bL) × (aW+bW)，约束 aL+bL ≤ palletL 且 aW+bW ≤ palletW。
+  // 托盘更大时可沿 L/W 方向堆多个块，每块 4 箱。
+  for (const [aL, aW] of orients) {
+    for (const [bL, bW] of orients) {
+      if (aL + bL > palletL + 1e-6) continue;
+      if (aW + bW > palletW + 1e-6) continue;
+      const blockL = aL + bL, blockW = aW + bW;
+      const blocksL = Math.max(1, Math.floor((palletL + 1e-6) / blockL));
+      const blocksW = Math.max(1, Math.floor((palletW + 1e-6) / blockW));
+      const n = 4 * blocksL * blocksW;
+      if (!best || n > best.n) {
+        best = { rA: 0, rB: 0, oA: [aL, aW], oB: [bL, bW], n, depth: blocksW * blockW,
+          pattern: 'pinwheel', blocksL, blocksW, blockL, blockW };
       }
     }
   }
@@ -1218,7 +1238,7 @@ function palletLevelLayout(palletL, palletW, boxL, boxW) {
       const n = Math.floor(palletL / uL) * Math.floor(palletW / uW);
       if (n > 0 && (!best || n > best.bestN || (n === best.bestN && n > 0))) {
         const rows = Math.floor(palletW / uW);
-        best = { rA: rows, rB: 0, oA: [uL, uW], oB: null, n, depth: rows * uW, bestN: n };
+        best = { rA: rows, rB: 0, oA: [uL, uW], oB: null, n, depth: rows * uW, bestN: n, pattern: 'single' };
       }
     }
   }
@@ -1238,30 +1258,59 @@ function palletPlanSVG(layout, palletL, palletW, opts) {
   html += `<rect x="${x0}" y="${y0}" width="${palletPxL}" height="${palletPxW}" fill="#fde68a" stroke="#a16207" stroke-width="1.2"/>`;
   // 2px 缝隙便于看清边界
   const gap = 2;
-  // 画 rA 行（朝向 A）
-  let yc = y0;
-  for (let r = 0; r < layout.rA; r++) {
-    const rowW = layout.oA[1] * scale;
-    const rowL = layout.oA[0] * scale;
-    const n = Math.floor(palletL / layout.oA[0]);
-    for (let i = 0; i < n; i++) {
-      const bx = x0 + i * (rowL + gap);
-      html += `<rect x="${bx.toFixed(2)}" y="${yc.toFixed(2)}" width="${(rowL).toFixed(2)}" height="${rowW.toFixed(2)}" fill="#fef3c7" stroke="#d97706" stroke-width="0.8"/>`;
+  const boxRect = (bx, by, bw, bh, fill, stroke) =>
+    `<rect x="${bx.toFixed(2)}" y="${by.toFixed(2)}" width="${bw.toFixed(2)}" height="${bh.toFixed(2)}" fill="${fill}" stroke="${stroke}" stroke-width="0.8"/>`;
+  const FILL_A = '#fef3c7', STROKE_A = '#d97706';   // 朝向 A：橙黄
+  const FILL_B = '#dbeafe', STROKE_B = '#2563eb';   // 朝向 B：蓝色
+
+  if (layout.pattern === 'pinwheel') {
+    // 田字：每块 4 个箱（A 在 TL+BR、B 在 TR+BL），可堆多块
+    const aL = layout.oA[0], aW = layout.oA[1];
+    const bL = layout.oB[0], bW = layout.oB[1];
+    const blockL = layout.blockL || (aL + bL);
+    const blockW = layout.blockW || (aW + bW);
+    const blocksL = layout.blocksL || 1;
+    const blocksW = layout.blocksW || 1;
+    for (let bx = 0; bx < blocksL; bx++) {
+      for (let by = 0; by < blocksW; by++) {
+        const ox = x0 + bx * blockL * scale;
+        const oy = y0 + by * blockW * scale;
+        // TL：A 朝向
+        html += boxRect(ox, oy, aL * scale, aW * scale, FILL_A, STROKE_A);
+        // TR：B 朝向
+        html += boxRect(ox + aL * scale + gap, oy, bL * scale, bW * scale, FILL_B, STROKE_B);
+        // BL：B 朝向
+        html += boxRect(ox, oy + aW * scale + gap, bL * scale, bW * scale, FILL_B, STROKE_B);
+        // BR：A 朝向
+        html += boxRect(ox + bL * scale + gap, oy + bW * scale + gap, aL * scale, aW * scale, FILL_A, STROKE_A);
+      }
     }
-    yc += rowW + gap;
-  }
-  // 画 rB 行（朝向 B）
-  for (let r = 0; r < layout.rB; r++) {
-    if (!layout.oB) break;
-    const rowW = layout.oB[1] * scale;
-    const rowL = layout.oB[0] * scale;
-    const n = Math.floor(palletL / layout.oB[0]);
-    for (let i = 0; i < n; i++) {
-      const bx = x0 + i * (rowL + gap);
-      html += `<rect x="${bx.toFixed(2)}" y="${yc.toFixed(2)}" width="${(rowL).toFixed(2)}" height="${rowW.toFixed(2)}" fill="#dbeafe" stroke="#2563eb" stroke-width="0.8"/>`;
+  } else {
+    // 行式（row / single）：每个 row 用同一种朝向，沿 W 方向逐行堆叠
+    let yc = y0;
+    for (let r = 0; r < (layout.rA || 0); r++) {
+      const rowW = layout.oA[1] * scale;
+      const rowL = layout.oA[0] * scale;
+      const n = Math.floor(palletL / layout.oA[0]);
+      for (let i = 0; i < n; i++) {
+        const bx = x0 + i * (rowL + gap);
+        html += boxRect(bx, yc, rowL, rowW, FILL_A, STROKE_A);
+      }
+      yc += rowW + gap;
     }
-    yc += rowW + gap;
+    for (let r = 0; r < (layout.rB || 0); r++) {
+      if (!layout.oB) break;
+      const rowW = layout.oB[1] * scale;
+      const rowL = layout.oB[0] * scale;
+      const n = Math.floor(palletL / layout.oB[0]);
+      for (let i = 0; i < n; i++) {
+        const bx = x0 + i * (rowL + gap);
+        html += boxRect(bx, yc, rowL, rowW, FILL_B, STROKE_B);
+      }
+      yc += rowW + gap;
+    }
   }
+
   // 角标尺寸文字
   html += `<text x="${x0}" y="${(y0 + palletPxW + 14)}" font-size="11" fill="#57534e">${palletL}×${palletW}mm</text>`;
   html += `<text x="${(x0 + palletPxL - 60)}" y="${(y0 + palletPxW + 14)}" font-size="11" fill="#57534e" text-anchor="end">${layout.n} 个/层</text>`;
@@ -1276,11 +1325,20 @@ function renderPalletPlanText(g) {
   if (!layout) return '';
   const lA = layout.oA[0], wA = layout.oA[1];
   const lB = layout.oB ? layout.oB[0] : 0, wB = layout.oB ? layout.oB[1] : 0;
+  const pl = +g.palletL, pw = +g.palletW;
+  if (layout.pattern === 'pinwheel') {
+    const usedL = (layout.blockL || 0) * (layout.blocksL || 1);
+    const usedW = (layout.blockW || 0) * (layout.blocksW || 1);
+    const blockDesc = (layout.blocksL || 1) === 1 && (layout.blocksW || 1) === 1
+      ? '4 个'
+      : `${layout.blocksL}×${layout.blocksW} 块、每块 4 个、共 ${layout.n} 个`;
+    return `每托每层 ${layout.n} 个（田字交错：${blockDesc}；A 朝向 ${lA}×${wA} 在 TL+BR，B 朝向 ${lB}×${wB} 在 TR+BL），占用 ${usedL}×${usedW} / ${pl}×${pw}mm`;
+  }
   const parts = [];
-  if (layout.rA > 0) parts.push(`${layout.rA}行×${Math.floor(+g.palletL / lA)}个（${lA}×${wA} 朝向）`);
-  if (layout.rB > 0) parts.push(`${layout.rB}行×${Math.floor(+g.palletL / lB)}个（${lB}×${wB} 朝向）`);
-  const depthTotal = layout.rA * wA + layout.rB * wB;
-  return `每托每层 ${layout.n} 个（${parts.join(' + ')}），占用深度 ${depthTotal} / ${g.palletW}mm`;
+  if (layout.rA > 0) parts.push(`${layout.rA}行×${Math.floor(pl / lA)}个（${lA}×${wA} 朝向）`);
+  if (layout.rB > 0) parts.push(`${layout.rB}行×${Math.floor(pl / lB)}个（${lB}×${wB} 朝向）`);
+  const depthTotal = (layout.rA || 0) * wA + (layout.rB || 0) * wB;
+  return `每托每层 ${layout.n} 个（${parts.join(' + ')}），占用深度 ${depthTotal} / ${pw}mm`;
 }
 
 function getRefGood(){ for (const g of goods) { if ((+g.l>0)&&(+g.w>0)&&(+g.h>0)) return g; } return null; }

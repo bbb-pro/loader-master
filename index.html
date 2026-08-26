@@ -43,7 +43,7 @@
       <!-- 集装箱配置 -->
       <section class="bg-white rounded-xl shadow p-4">
         <h2 class="font-semibold mb-3">1. 集装箱配置</h2>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 items-end">
           <label class="text-sm">柜型
             <select id="ctype" class="mt-1 border rounded p-2 w-full">
               <option value="20GP">20GP</option>
@@ -58,7 +58,7 @@
           <label class="text-sm">内高(mm)<input id="ch" type="number" class="mt-1 border rounded p-2 w-full" value="2690"></label>
           <label class="text-sm">最大承重(kg)<input id="cm" type="number" class="mt-1 border rounded p-2 w-full" value="26500"></label>
           <label class="text-sm" title="仅水平方向(长/宽)留空，便于装卸；高度方向纸箱直接叠放不预留间隙">箱间隙·水平(mm)<input id="cgap" type="number" class="mt-1 border rounded p-2 w-full" value="0"></label>
-          <label class="text-sm col-span-2">摆放顺序（装柜优先级）
+          <label class="text-sm lg:col-span-2">摆放顺序（装柜优先级）
             <select id="packOrder" class="mt-1 border rounded p-2 w-full">
               <option value="bottom">从下到上（底层优先，层内由里向外）</option>
               <option value="inside" selected>从里到外（柜里端优先，再向上）</option>
@@ -67,7 +67,7 @@
             </select>
           </label>
         </div>
-        <div class="col-span-2 text-sm text-slate-700 bg-blue-50 border border-blue-100 rounded p-2">
+        <div class="lg:col-span-2 text-sm text-slate-700 bg-blue-50 border border-blue-100 rounded p-2">
           📦 理论最大容量：<span id="theoryCap" class="font-semibold text-blue-700">录入纸箱尺寸后显示</span>
         </div>
       </section>
@@ -117,7 +117,7 @@
     <div id="rightCol" class="w-full lg:w-[400px] lg:shrink-0 lg:self-start lg:max-h-[calc(100vh-1.5rem)] lg:overflow-y-auto space-y-4 lg:pl-1">
       <section id="summaryArea" class="hidden bg-white rounded-xl shadow p-4">
         <h2 class="font-semibold mb-2">4. 结果汇总</h2>
-        <div id="summary" class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm"></div>
+        <div id="summary" class="grid grid-cols-1 lg:grid-cols-2 gap-3 text-sm"></div>
         <div id="warnings" class="mt-3 space-y-1 text-sm text-rose-600"></div>
         <div id="tabs" class="flex flex-wrap gap-2 mt-3"></div>
       </section>

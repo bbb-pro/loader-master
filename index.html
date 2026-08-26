@@ -380,6 +380,7 @@ function packBrick(items, spec, gap, ORDER) {
     }
   }
   slots.sort((a,b) => a.key - b.key);
+  if (slots.length === 0) return null;  // 整托高度超出柜高（无可用槽位）：退回贪心，避免越界崩溃
 
   // 按槽位顺序填入（sortedItems 已按优先级/重量排好）
   // 每装满一柜（命中每柜槽位数 slotsPerContainer）或达重量上限就开新柜；
@@ -445,6 +446,16 @@ function pack(items, spec, gap, order) {
     if (sameFootprint && +first.L !== +first.W) {
       const bres = packBrick(items, spec, gap, ORDER);
       if (bres && bres.containers.length > 0) return bres;
+    }
+  }
+  // 特殊优化：全部为同一型号普通纸箱（非托盘）时，用「6 朝向最大网格」精确装，
+  // 避免贪心逐箱选朝向锁死在次优朝向（典型：2000×800×800 在 40HQ，贪心得 36 箱、网格得 45 箱）。
+  if (items.length > 0 && items.every(it => !it.isPallet)) {
+    const f = items[0];
+    const uniform = items.every(it => +it.L===+f.L && +it.W===+f.W && +it.H===+f.H);
+    if (uniform) {
+      const gres = packUniformGrid(items, spec, gap, ORDER, f);
+      if (gres && gres.containers.length > 0) return gres;
     }
   }
   const containers = [];
@@ -595,6 +606,81 @@ function pack(items, spec, gap, order) {
     c.loadRate = c.usedVol / interiorVol;
     c.interiorVol = interiorVol; c.spec = spec; c.gap = gap;
     if (c.usedWeight > maxLoad + 0.001) c.warnings.push('超重: 本柜 '+c.usedWeight.toFixed(0)+'kg / 限重 '+maxLoad+'kg');
+  }
+  return { containers, warnings, spec, gap, interiorVol, maxLoad };
+}
+
+// 单一型号普通纸箱（非托盘、长宽高全相同）的精确网格装箱：
+// 枚举 6 种朝向，按「每柜总箱数 = 每层数 × 层数」取最大网格铺满，返回与 pack 同构的结果。
+// 目的：规避贪心逐箱选朝向锁死在次优朝向（典型 2000×800×800/40HQ，贪心得 36、网格得 45）。
+// 与 theoryCapacity 普通分支公式完全一致（gap=0 时 3D 结果 == 理论容量），故「理论」与「预览」不会再对不上。
+function packUniformGrid(items, spec, gap, ORDER, f) {
+  const L=+spec.l, W=+spec.w, H=+spec.h, maxLoad=+spec.maxLoad;
+  const gx=+gap, gy=+gap, gz=0;
+  const bL=+f.L, bW=+f.W, bH=+f.H;
+  const base=[bL,bW,bH];
+  const perms=[[base[0],base[1],base[2]],[base[0],base[2],base[1]],
+               [base[1],base[0],base[2]],[base[1],base[2],base[0]],
+               [base[2],base[0],base[1]],[base[2],base[1],base[0]]];
+  const valid = perms.filter(p => {
+    if (!f.allowRotate && (p[0]!==base[0]||p[1]!==base[1])) return false;
+    if (!f.allowInvert && p[2]!==base[2]) return false;
+    return true;
+  });
+  // 每柜「单方向能放几个」：gap=0 时即 floor(总/n)，与 theoryCapacity 一致；gap>0 时按留空步进并夹在可用区内。
+  const fitCount = (total, unit, g) => {
+    if (!(unit>0)) return 0;
+    if (g <= 0) return Math.floor(total/unit);
+    const max = (total - 2*g - unit)/(unit+g);
+    return max < 0 ? 0 : Math.floor(max) + 1;
+  };
+  // 选「每柜总箱数」最大的朝向
+  let best=null;
+  for (const [uL,uW,uH] of valid) {
+    if (uH > H+0.01) continue;
+    const nX=fitCount(L,uL,gx), nY=fitCount(W,uW,gy), nZ=fitCount(H,uH,gz);
+    const total=nX*nY*nZ;
+    if (total > (best?best.total:0)) best={uL,uW,uH,nX,nY,nZ,total};
+  }
+  if (!best || best.total <= 0) return null;  // 放不下，退回贪心由上层处理
+  // 按 ORDER 给网格位置排序（决定 items.length < 容量时优先填哪些槽）
+  const keyOf = (x,y,z,uL,uW) => {
+    if (ORDER==='door')    return (L-(x+uL))*1e6 + z*1e3 + y;
+    if (ORDER==='side')    return y*1e6 + z*1e3 + x;
+    if (ORDER==='inside')  return x*1e6 + z*1e3 + y;
+    return z*1e6 + x*1e3 + y;   // bottom（默认）：底层优先、层内由里向外
+  };
+  const interiorVol = L*W*H;
+  const containers = [];
+  const warnings = [];
+  let idx = 0;
+  while (idx < items.length) {
+    // 生成本柜全部网格槽位
+    const slots = [];
+    for (let k=0;k<best.nZ;k++)
+      for (let j=0;j<best.nY;j++)
+        for (let i=0;i<best.nX;i++) {
+          const x = gx + i*(best.uL+gx);
+          const y = gy + j*(best.uW+gy);
+          const z = gz + k*(best.uH+gz);
+          slots.push({x,y,z});
+        }
+    slots.sort((a,b)=> keyOf(a.x,a.y,a.z,best.uL,best.uW) - keyOf(b.x,b.y,b.z,best.uL,best.uW));
+    const c = { index:containers.length, items:[], usedVol:0, usedWeight:0, warnings:[] };
+    for (const s of slots) {
+      if (idx >= items.length) break;
+      const it = items[idx++];
+      const box = { x:s.x, y:s.y, z:s.z, L:best.uL, W:best.uW, H:best.uH,
+        name:it.name, refId:it.refId, priority:it.priority, group:it.group,
+        isPallet:false, count:it.count, colorKey:it.colorKey, weight:it.weight };
+      c.items.push(box);
+      c.usedVol += best.uL*best.uW*best.uH;
+      c.usedWeight += it.weight;
+    }
+    c.loadRate = c.usedVol/interiorVol;
+    c.interiorVol = interiorVol; c.spec = spec; c.gap = gap;
+    if (c.usedWeight > maxLoad + 0.001) c.warnings.push('超重: 本柜 '+c.usedWeight.toFixed(0)+'kg / 限重 '+maxLoad+'kg');
+    containers.push(c);
   }
   return { containers, warnings, spec, gap, interiorVol, maxLoad };
 }
@@ -1179,11 +1265,14 @@ function theoryCapacity(spec, gap, g) {
     for (const [uL,uW,uH] of orients) {
       if (uH > H+0.01) continue;
       const per=Math.floor(L/uL)*Math.floor(W/uW);
-      if (per > (best?best.per:0)) best={per,uH};
+      const layers=Math.floor(H/uH);
+      const total=per*layers;
+      // 比较「总箱数 per×层数」，而非仅「单层 per」：
+      // 横放(2000 沿柜宽)单层虽少但能堆 3 层，总箱数更多（典型 2000×800×800/40HQ 应得 45 而非 30）
+      if (total > (best?best.total:0)) best={per,uH,layers,total};
     }
     if (!best) return null;
-    const layers = Math.max(1,Math.floor(H/best.uH));
-    return { unit:'箱', total: best.per*layers, perLayer: best.per, layers };
+    return { unit:'箱', total: best.total, perLayer: best.per, layers: best.layers };
   }
 }
 // === 单托盘打托方案（俯视）：在「托盘」这件容器里用砖砌摆放「箱子」 ===

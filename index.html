@@ -352,75 +352,99 @@ function packBrick(items, spec, gap, ORDER) {
   const allWarnings = [];
   const maxItemsPerContainer = Math.max(1, Math.floor(maxLoad / Math.max(1, +first.weight || 1)));
 
-  // 预生成整柜所有可用槽位（砖砌布局），再按 ORDER 决定填入顺序
+  // 预生成整柜「地面列位」（砖砌布局）：地面放 perLayer 个托盘，每列可自下而上堆叠多个托盘
   const rowDefs = rAsFirst
     ? [{n: bestPlan.rB, o: bestPlan.oB}, {n: bestPlan.rA, o: bestPlan.oA}]
     : [{n: bestPlan.rA, o: bestPlan.oA}, {n: bestPlan.rB, o: bestPlan.oB}];
   let yCursor = inner.y0;
   const rowsInfo = rowDefs.map(rd => { const info = { n: rd.n, o: rd.o, y0: yCursor }; yCursor += rd.o[1] + gy; return info; });
-  const nLayer = Math.max(0, Math.floor((inner.z1 + 1e-6) / unitH));
-  const slots = [];
-  for (let z = 0; z < nLayer; z++) {
-    for (let ri = 0; ri < rowsInfo.length; ri++) {
-      const rd = rowsInfo[ri];
-      if (rd.n === 0) continue;  // 跳过最佳方案中 rA/rB=0 的"空朝向"行，避免生成越界槽位（修复：托盘宽2000时第二行溢出集装箱）
-      const perRow = Math.floor(l / rd.o[0]);
-      for (let xi = 0; xi < perRow; xi++) {
-        slots.push({
-          x: inner.x0 + xi*(rd.o[0]+gx),
-          y: rd.y0,
-          z: z*unitH,
-          L: rd.o[0], W: rd.o[1],
-          // 从里到外：x(里→外) → 层(下→上) → 行；其余：层(下→上) → 行 → x(里→外)
-          key: ORDER === 'inside'
-            ? xi*1e7 + z*1e4 + ri
-            : z*1e7 + ri*1e4 + xi,
-        });
+
+  // 列位：固定 (x,y) 与底面尺寸 L/W；同一列位可向上堆叠多个不同高度的托盘（高度之和 ≤ 柜高）。
+  // 这正是「同一底面、不同打托高度的两类托盘可叠放」：1050mm 托 + 1350mm 托 = 2400mm ≤ 2690mm，
+  // 所以一列能放 2 托；而旧算法用 unitH=max 强制每层等高，导致两类托盘都只能各放 1 层。
+  const columns = [];
+  for (let ri = 0; ri < rowsInfo.length; ri++) {
+    const rd = rowsInfo[ri];
+    if (rd.n === 0) continue;  // 跳过最佳方案中为 0 的"空朝向"行，避免越界列位
+    const perRow = Math.floor(l / rd.o[0]);
+    for (let xi = 0; xi < perRow; xi++) {
+      columns.push({
+        x: inner.x0 + xi*(rd.o[0]+gx),
+        y: rd.y0,
+        L: rd.o[0], W: rd.o[1],
+        // 从里到外：x(里→外) 优先；其余：行优先
+        key: (ORDER === 'inside') ? xi*1e4 + ri : ri*1e4 + xi,
+      });
+    }
+  }
+  if (columns.length === 0) return null;  // 托盘底面放不进柜：退回贪心
+  columns.sort((a,b) => a.key - b.key);
+
+  // 待装托盘池（每个 item 即一个物理托盘）
+  const pool = sortedItems.slice();
+  const interiorVol = l*w*h;
+
+  // 逐柜填充：每柜用同一套列位布局，每列自下而上把托盘堆到柜高上限；
+  // 选「最高且能放下」的托盘优先（best-fit 降序），既填满空间，也天然把较高的托盘压在底下。
+  let guard = 0;
+  while (pool.length > 0) {
+    if (++guard > 200000) break;  // 安全阀，防异常死循环
+    const c = { index: containers.length, items:[], usedVol:0, usedWeight:0, warnings:[] };
+    containers.push(c);
+    const stacks = columns.map(col => ({ x:col.x, y:col.y, L:col.L, W:col.W, usedH:0, items:[] }));
+    let progressed = false;
+    for (const st of stacks) {
+      let placed = true;
+      while (placed) {
+        placed = false;
+        let bi = -1, bH = -1;
+        for (let i = 0; i < pool.length; i++) {
+          const p = pool[i];
+          const newH = st.usedH + (+p.H);
+          if (newH > inner.z1 + 1e-6) continue;                       // 超过柜高，放不下
+          if (c.usedWeight + (+p.weight) > maxLoad + 1e-6) continue;   // 超本柜限重
+          if (+p.H > bH) { bH = +p.H; bi = i; }                       // 选最高的可放托盘
+        }
+        if (bi >= 0) {
+          const p = pool[bi];
+          c.items.push({
+            x: st.x, y: st.y, z: st.usedH,
+            L: st.L, W: st.W, H: +p.H,
+            name: p.name, refId: p.refId, priority: p.priority, group: p.group,
+            isPallet: true, count: p.count, colorKey: p.colorKey, weight: p.weight,
+            palletH: +p.palletH || 150, goodsH: +p.H - (+p.palletH || 150),
+          });
+          c.usedVol += (st.L * st.W * (+p.H));
+          c.usedWeight += (+p.weight);
+          st.usedH += (+p.H);
+          st.items.push(p);
+          pool.splice(bi, 1);
+          placed = true; progressed = true;
+        }
       }
     }
-  }
-  slots.sort((a,b) => a.key - b.key);
-  if (slots.length === 0) return null;  // 整托高度超出柜高（无可用槽位）：退回贪心，避免越界崩溃
-
-  // 按槽位顺序填入（sortedItems 已按优先级/重量排好）
-  // 每装满一柜（命中每柜槽位数 slotsPerContainer）或达重量上限就开新柜；
-  // 用 slots[placedInC] 取槽位（自动循环回本柜第 1 个槽），避免多柜时槽位耗尽丢托
-  const slotsPerContainer = slots.length;
-  let cursor = 0;
-  let c = { index:0, items:[], usedVol:0, usedWeight:0, warnings:[] };
-  containers.push(c);
-  let placedInC = 0;
-  while (cursor < sortedItems.length) {
-    if (placedInC >= slotsPerContainer || placedInC >= maxItemsPerContainer) {
-      c = { index: containers.length, items:[], usedVol:0, usedWeight:0, warnings:[] };
-      containers.push(c);
-      placedInC = 0;
+    // 单托已超柜高/限重导致整柜放不下：强制放一个并告警，避免死循环
+    if (!progressed && pool.length > 0) {
+      const p = pool.shift();
+      c.items.push({
+        x: stacks[0].x, y: stacks[0].y, z: 0,
+        L: stacks[0].L, W: stacks[0].W, H: +p.H,
+        name: p.name, refId: p.refId, priority: p.priority, group: p.group,
+        isPallet: true, count: p.count, colorKey: p.colorKey, weight: p.weight,
+        palletH: +p.palletH || 150, goodsH: +p.H - (+p.palletH || 150),
+      });
+      c.usedVol += (stacks[0].L * stacks[0].W * (+p.H));
+      c.usedWeight += (+p.weight);
+      c.warnings.push('单托超柜高/限重，已强制放置: '+p.name+' ('+(+p.H)+'mm)');
+      progressed = true;
     }
-    const s = slots[placedInC];
-    const it = sortedItems[cursor];
-    const box = {
-      x: s.x, y: s.y, z: s.z,
-      L: s.L, W: s.W, H: +it.H,
-      name: it.name, refId: it.refId, priority: it.priority, group: it.group,
-      isPallet: true, count: it.count, colorKey: it.colorKey, weight: it.weight,
-      palletH: +it.palletH || 150, goodsH: +it.H - (+it.palletH || 150),
-    };
-    c.items.push(box);
-    c.usedVol += (s.L*s.W*(+it.H));
-    c.usedWeight += it.weight;
-    placedInC++;
-    cursor++;
-  }
-  for (const c2 of containers) {
-    if (c2.usedWeight > maxLoad + 0.001) c2.warnings.push('超重: 本柜 '+c2.usedWeight.toFixed(0)+'kg / 限重 '+maxLoad+'kg');
-  }
-  // 最终化：每柜的 loadRate/interiorVol/spec/gap
-  const interiorVol = l*w*h;
-  for (const c of containers) {
+    if (c.usedWeight > maxLoad + 0.001) c.warnings.push('超重: 本柜 '+c.usedWeight.toFixed(0)+'kg / 限重 '+maxLoad+'kg');
     c.loadRate = c.usedVol / interiorVol;
     c.interiorVol = interiorVol; c.spec = spec; c.gap = gap;
     allWarnings.push(...c.warnings);
+    if (!progressed) break;  // 实在放不下，跳出（理论上不会到这）
   }
+  if (containers.length === 0) return null;
   return { containers, warnings: allWarnings, spec, gap, interiorVol, maxLoad, _plan: 'brick', _perLayer: bestPlan.rA*Math.floor(l/bestPlan.oA[0]) + bestPlan.rB*Math.floor(l/bestPlan.oB[0]) };
 }
 

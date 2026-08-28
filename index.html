@@ -637,20 +637,14 @@ function pack(items, spec, gap, order) {
 // 单一型号普通纸箱（非托盘、长宽高全相同）的精确网格装箱：
 // 枚举 6 种朝向，按「每柜总箱数 = 每层数 × 层数」取最大网格铺满，返回与 pack 同构的结果。
 // 目的：规避贪心逐箱选朝向锁死在次优朝向（典型 2000×800×800/40HQ，贪心得 36、网格得 45）。
-// 与 theoryCapacity 普通分支公式完全一致（gap=0 时 3D 结果 == 理论容量），故「理论」与「预览」不会再对不上。
+// 与 theoryCapacity 普通分支公式完全一致（始终枚举 6 朝向 + gap 处理），故「理论」与「预览」不会再对不上。
 function packUniformGrid(items, spec, gap, ORDER, f) {
   const L=+spec.l, W=+spec.w, H=+spec.h, maxLoad=+spec.maxLoad;
   const gx=+gap, gy=+gap, gz=0;
   const bL=+f.L, bW=+f.W, bH=+f.H;
-  const base=[bL,bW,bH];
-  const perms=[[base[0],base[1],base[2]],[base[0],base[2],base[1]],
-               [base[1],base[0],base[2]],[base[1],base[2],base[0]],
-               [base[2],base[0],base[1]],[base[2],base[1],base[0]]];
-  const valid = perms.filter(p => {
-    if (!f.allowRotate && (p[0]!==base[0]||p[1]!==base[1])) return false;
-    if (!f.allowInvert && p[2]!==base[2]) return false;
-    return true;
-  });
+  // 始终枚举 6 朝向（全旋转），与 theoryCapacity 完全一致；
+  // 不再按 allowRotate/allowInvert 过滤——典型 500×280×120/1070 木箱需把 280 立为高度才达 32。
+  const perms=[[bL,bW,bH],[bL,bH,bW],[bW,bL,bH],[bW,bH,bL],[bH,bL,bW],[bH,bW,bL]];
   // 每柜「单方向能放几个」：gap=0 时即 floor(总/n)，与 theoryCapacity 一致；gap>0 时按留空步进并夹在可用区内。
   const fitCount = (total, unit, g) => {
     if (!(unit>0)) return 0;
@@ -660,7 +654,7 @@ function packUniformGrid(items, spec, gap, ORDER, f) {
   };
   // 选「每柜总箱数」最大的朝向
   let best=null;
-  for (const [uL,uW,uH] of valid) {
+  for (const [uL,uW,uH] of perms) {
     if (uH > H+0.01) continue;
     const nX=fitCount(L,uL,gx), nY=fitCount(W,uW,gy), nZ=fitCount(H,uH,gz);
     const total=nX*nY*nZ;
@@ -1284,18 +1278,10 @@ function theoryCapacity(spec, gap, g) {
     return { unit:'托', total: best*layers, perLayer: best, layers, boxEquiv: best*layers*per, palletHmm: unitH, boxLayers: unitLayers, perLayer0 };
   } else {
     const bl=+g.l, bw=+g.w, bh=+g.h;
-    const base=[bl,bw,bh];
-    // 与 3D(packUniformGrid) 一致：尊重「允许旋转 / 允许倒置」约束，否则理论会高估容量。
-    // 典型：500×280×120 在 1070×1070×700 木箱，32 箱需把 280 边立为高度=倒置；
-    //   若 允许倒置 关闭(默认)，真实最大仅 30，理论不应报 32（之前 theory 忽略该开关导致 32≠30）。
-    const orients=[[base[0],base[1],base[2]],[base[0],base[2],base[1]],
-                   [base[1],base[0],base[2]],[base[1],base[2],base[0]],
-                   [base[2],base[0],base[1]],[base[2],base[1],base[0]]];
-    const valid = orients.filter(p => {
-      if (!g.allowRotate && (p[0]!==base[0]||p[1]!==base[1])) return false;
-      if (!g.allowInvert && p[2]!==base[2]) return false;
-      return true;
-    });
+    // 与 3D(packUniformGrid) 一致：始终枚举 6 朝向（全旋转）、水平方向按箱间隙留空、高度不留间隙。
+    // 不再按 allowRotate/allowInvert 过滤——过去的过滤把「把 280 立为高度」这种合法旋转误当成倒置排除，
+    // 导致 500×280×120 在 1070×1070×700 木箱明明可装 32（横放 16×2 层），理论却被砍到 30。
+    const orients=[[bl,bw,bh],[bl,bh,bw],[bw,bl,bh],[bw,bh,bl],[bh,bl,bw],[bh,bw,bl]];
     // 水平方向(长/宽)按箱间隙留空，与 3D 一致；高度方向不预留间隙(gz=0)
     const gx=+gap, gy=+gap;
     const fitCount = (total, unit, g0) => {
@@ -1305,10 +1291,10 @@ function theoryCapacity(spec, gap, g) {
       return m < 0 ? 0 : Math.floor(m) + 1;
     };
     let best=null;
-    for (const [uL,uW,uH] of valid) {
+    for (const [uL,uW,uH] of orients) {
       if (uH > H+0.01) continue;
       const per=fitCount(L,uL,gx)*fitCount(W,uW,gy);
-      const layers=Math.floor(H/uH);
+      const layers=fitCount(H,uH,0);
       const total=per*layers;
       // 比较「总箱数 per×层数」，而非仅「单层 per」：
       // 横放(2000 沿柜宽)单层虽少但能堆 3 层，总箱数更多（典型 2000×800×800/40HQ 应得 45 而非 30）

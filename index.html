@@ -637,14 +637,22 @@ function pack(items, spec, gap, order) {
 // 单一型号普通纸箱（非托盘、长宽高全相同）的精确网格装箱：
 // 枚举 6 种朝向，按「每柜总箱数 = 每层数 × 层数」取最大网格铺满，返回与 pack 同构的结果。
 // 目的：规避贪心逐箱选朝向锁死在次优朝向（典型 2000×800×800/40HQ，贪心得 36、网格得 45）。
-// 与 theoryCapacity 普通分支公式完全一致（始终枚举 6 朝向 + gap 处理），故「理论」与「预览」不会再对不上。
+// 与 theoryCapacity 普通分支公式完全一致（尊重 allowRotate/allowInvert + palletLevelLayout 算每层）
+// 「H 变=倒置」过滤保留：若 允许倒置 关闭，仅 [bl,bw,bh] 原朝向可用（其它视为倒置排除）。
+// 每层用 palletLevelLayout 算交错码盘箱数（行式+田字+2D 棋盘三种拓扑），不再用简单 floor×floor 网格。
 function packUniformGrid(items, spec, gap, ORDER, f) {
   const L=+spec.l, W=+spec.w, H=+spec.h, maxLoad=+spec.maxLoad;
   const gx=+gap, gy=+gap, gz=0;
   const bL=+f.L, bW=+f.W, bH=+f.H;
-  // 始终枚举 6 朝向（全旋转），与 theoryCapacity 完全一致；
-  // 不再按 allowRotate/allowInvert 过滤——典型 500×280×120/1070 木箱需把 280 立为高度才达 32。
-  const perms=[[bL,bW,bH],[bL,bH,bW],[bW,bL,bH],[bW,bH,bL],[bH,bL,bW],[bH,bW,bL]];
+  const base=[bL,bW,bH];
+  const perms=[[base[0],base[1],base[2]],[base[0],base[2],base[1]],
+               [base[1],base[0],base[2]],[base[1],base[2],base[0]],
+               [base[2],base[0],base[1]],[base[2],base[1],base[0]]];
+  const valid = perms.filter(p => {
+    if (!f.allowRotate && (p[0]!==base[0]||p[1]!==base[1])) return false;
+    if (!f.allowInvert && p[2]!==base[2]) return false;
+    return true;
+  });
   // 每柜「单方向能放几个」：gap=0 时即 floor(总/n)，与 theoryCapacity 一致；gap>0 时按留空步进并夹在可用区内。
   const fitCount = (total, unit, g) => {
     if (!(unit>0)) return 0;
@@ -654,11 +662,13 @@ function packUniformGrid(items, spec, gap, ORDER, f) {
   };
   // 选「每柜总箱数」最大的朝向
   let best=null;
-  for (const [uL,uW,uH] of perms) {
+  for (const [uL,uW,uH] of valid) {
     if (uH > H+0.01) continue;
-    const nX=fitCount(L,uL,gx), nY=fitCount(W,uW,gy), nZ=fitCount(H,uH,gz);
-    const total=nX*nY*nZ;
-    if (total > (best?best.total:0)) best={uL,uW,uH,nX,nY,nZ,total};
+    const layout = palletLevelLayout(L, W, uL, uW);
+    const nX = (layout && layout.n > 0) ? layout.n : (fitCount(L,uL,gx) * fitCount(W,uW,gy));
+    const nZ = fitCount(H, uH, gz);
+    const total = nX * nZ;
+    if (total > (best?best.total:0)) best = { uL, uW, uH, nX, nZ, total, layout };
   }
   if (!best || best.total <= 0) return null;  // 放不下，退回贪心由上层处理
   // 按 ORDER 给网格位置排序（决定 items.length < 容量时优先填哪些槽）
@@ -671,28 +681,82 @@ function packUniformGrid(items, spec, gap, ORDER, f) {
   const interiorVol = L*W*H;
   const containers = [];
   const warnings = [];
+  // 按 palletLevelLayout 结果精确生成每层所有槽位 (x,y,orient) 列表
+  // orient = 'A' 表示 [uL,uW] 朝向，'B' 表示 [oB.L, oB.W] 朝向
+  const layerSlots = (() => {
+    const lay = best.layout;
+    if (!lay) {
+      // 退化：均匀网格
+      const out = [];
+      for (let j=0;j<best.uW_grid?.()??0;j++) {}  // 不进
+      return null;
+    }
+    const slots = [];
+    if (lay.pattern === 'row' || lay.pattern === 'single') {
+      // 行式：rA 行 A 在上 + rB 行 B 在下（按 palletLevelLayout 顺序 y 累加）
+      let yc = 0;
+      for (let r = 0; r < (lay.rA||0); r++) {
+        for (let xi = 0; xi < Math.floor(L / lay.oA[0]); xi++) slots.push({ x: xi*lay.oA[0], y: yc, oL: lay.oA[0], oW: lay.oA[1] });
+        yc += lay.oA[1];
+      }
+      for (let r = 0; r < (lay.rB||0); r++) {
+        for (let xi = 0; xi < Math.floor(L / lay.oB[0]); xi++) slots.push({ x: xi*lay.oB[0], y: yc, oL: lay.oB[0], oW: lay.oB[1] });
+        yc += lay.oB[1];
+      }
+    } else if (lay.pattern === 'pinwheel') {
+      // 田字：每块 4 箱 A 在 TL+BR、B 在 TR+BL；blocksL×blocksW 排块
+      const aL=lay.oA[0], aW=lay.oA[1], bL=lay.oB[0], bW=lay.oB[1];
+      const blockL=lay.blockL||(aL+bL), blockW=lay.blockW||(aW+bW);
+      for (let bx=0; bx<(lay.blocksL||1); bx++)
+        for (let by=0; by<(lay.blocksW||1); by++) {
+          const ox=bx*blockL, oy=by*blockW;
+          // TL: A
+          slots.push({ x: ox, y: oy, oL: aL, oW: aW });
+          // TR: B
+          slots.push({ x: ox+aL, y: oy, oL: bL, oW: bW });
+          // BL: B
+          slots.push({ x: ox, y: oy+aW, oL: bL, oW: bW });
+          // BR: A
+          slots.push({ x: ox+bL, y: oy+bW, oL: aL, oW: aW });
+        }
+    } else if (lay.pattern === 'checker') {
+      // 2D 棋盘：每块 2 箱 A 在 (0,0) + B 在 (aL, aW) 紧接 A 右下；blocksL×blocksW 排块
+      const aL=lay.oA[0], aW=lay.oA[1], bL=lay.oB[0], bW=lay.oB[1];
+      const blockL=lay.blockL||(aL+bL), blockW=lay.blockW||(aW+bW);
+      for (let bx=0; bx<(lay.blocksL||1); bx++)
+        for (let by=0; by<(lay.blocksW||1); by++) {
+          const ox=bx*blockL, oy=by*blockW;
+          slots.push({ x: ox, y: oy, oL: aL, oW: aW });
+          slots.push({ x: ox+aL, y: oy+aW, oL: bL, oW: bW });
+        }
+    }
+    return slots;
+  })();
+
   let idx = 0;
   while (idx < items.length) {
-    // 生成本柜全部网格槽位
+    // 生成本柜全部槽位：每层按 layerSlots 复制（按 z 累加）
     const slots = [];
-    for (let k=0;k<best.nZ;k++)
-      for (let j=0;j<best.nY;j++)
-        for (let i=0;i<best.nX;i++) {
-          const x = gx + i*(best.uL+gx);
-          const y = gy + j*(best.uW+gy);
-          const z = gz + k*(best.uH+gz);
-          slots.push({x,y,z});
-        }
-    slots.sort((a,b)=> keyOf(a.x,a.y,a.z,best.uL,best.uW) - keyOf(b.x,b.y,b.z,best.uL,best.uW));
+    for (let k=0; k<best.nZ; k++) {
+      const z = gz + k*(best.uH+gz);
+      if (layerSlots) {
+        for (const s of layerSlots) slots.push({ x: gx+s.x, y: gy+s.y, z, oL:s.oL, oW:s.oW });
+      } else {
+        // 退化路径（layout 解析失败）：用最简均匀网格
+        const nX=Math.floor(L/best.uL), nY=Math.floor(W/best.uW);
+        for (let j=0;j<nY;j++) for (let i=0;i<nX;i++) slots.push({ x:gx+i*best.uL, y:gy+j*best.uW, z, oL:best.uL, oW:best.uW });
+      }
+    }
+    slots.sort((a,b)=> keyOf(a.x,a.y,a.z, a.oL, a.oW) - keyOf(b.x,b.y,b.z, b.oL, b.oW));
     const c = { index:containers.length, items:[], usedVol:0, usedWeight:0, warnings:[] };
     for (const s of slots) {
       if (idx >= items.length) break;
       const it = items[idx++];
-      const box = { x:s.x, y:s.y, z:s.z, L:best.uL, W:best.uW, H:best.uH,
+      const box = { x:s.x, y:s.y, z:s.z, L:s.oL, W:s.oW, H:best.uH,
         name:it.name, refId:it.refId, priority:it.priority, group:it.group,
         isPallet:false, count:it.count, colorKey:it.colorKey, weight:it.weight };
       c.items.push(box);
-      c.usedVol += best.uL*best.uW*best.uH;
+      c.usedVol += s.oL*s.oW*best.uH;
       c.usedWeight += it.weight;
     }
     c.loadRate = c.usedVol/interiorVol;
@@ -1278,10 +1342,18 @@ function theoryCapacity(spec, gap, g) {
     return { unit:'托', total: best*layers, perLayer: best, layers, boxEquiv: best*layers*per, palletHmm: unitH, boxLayers: unitLayers, perLayer0 };
   } else {
     const bl=+g.l, bw=+g.w, bh=+g.h;
-    // 与 3D(packUniformGrid) 一致：始终枚举 6 朝向（全旋转）、水平方向按箱间隙留空、高度不留间隙。
-    // 不再按 allowRotate/allowInvert 过滤——过去的过滤把「把 280 立为高度」这种合法旋转误当成倒置排除，
-    // 导致 500×280×120 在 1070×1070×700 木箱明明可装 32（横放 16×2 层），理论却被砍到 30。
-    const orients=[[bl,bw,bh],[bl,bh,bw],[bw,bl,bh],[bw,bh,bl],[bh,bl,bw],[bh,bw,bl]];
+    const base=[bl,bw,bh];
+    // 与 3D(packUniformGrid) 一致：尊重「允许旋转 / 允许倒置」约束。
+    // 「H 变=倒置」是关键：500×280×120 在 1070×1070×700 木箱，要装 32 必须把 280 立为高度(=倒置)；
+    // 若 允许倒置 关闭(默认)，真实最大=30 (用户截图驳回旧全旋转 16/层，明确要保留此过滤)。
+    const orients=[[base[0],base[1],base[2]],[base[0],base[2],base[1]],
+                   [base[1],base[0],base[2]],[base[1],base[2],base[0]],
+                   [base[2],base[0],base[1]],[base[2],base[1],base[0]]];
+    const valid = orients.filter(p => {
+      if (!g.allowRotate && (p[0]!==base[0]||p[1]!==base[1])) return false;
+      if (!g.allowInvert && p[2]!==base[2]) return false;
+      return true;
+    });
     // 水平方向(长/宽)按箱间隙留空，与 3D 一致；高度方向不预留间隙(gz=0)
     const gx=+gap, gy=+gap;
     const fitCount = (total, unit, g0) => {
@@ -1291,17 +1363,18 @@ function theoryCapacity(spec, gap, g) {
       return m < 0 ? 0 : Math.floor(m) + 1;
     };
     let best=null;
-    for (const [uL,uW,uH] of orients) {
+    for (const [uL,uW,uH] of valid) {
       if (uH > H+0.01) continue;
-      const per=fitCount(L,uL,gx)*fitCount(W,uW,gy);
+      // 每层用 palletLevelLayout 算交错码盘箱数（含行式+田字+2D 棋盘三种拓扑）
+      const layout = palletLevelLayout(L, W, uL, uW);
+      const per = (layout && layout.n > 0) ? layout.n : (fitCount(L,uL,gx) * fitCount(W,uW,gy));
       const layers=fitCount(H,uH,0);
       const total=per*layers;
-      // 比较「总箱数 per×层数」，而非仅「单层 per」：
-      // 横放(2000 沿柜宽)单层虽少但能堆 3 层，总箱数更多（典型 2000×800×800/40HQ 应得 45 而非 30）
-      if (total > (best?best.total:0)) best={per,uH,layers,total};
+      // 比较「总箱数 per×层数」取最大
+      if (total > (best?best.total:0)) best={per,uH,layers,total,pattern:layout && layout.pattern};
     }
     if (!best) return null;
-    return { unit:'箱', total: best.total, perLayer: best.per, layers: best.layers };
+    return { unit:'箱', total: best.total, perLayer: best.per, layers: best.layers, pattern: best.pattern };
   }
 }
 // === 单托盘打托方案（俯视）：在「托盘」这件容器里用砖砌摆放「箱子」 ===
@@ -1347,6 +1420,25 @@ function palletLevelLayout(palletL, palletW, boxL, boxW) {
       if (!best || n > best.n) {
         best = { rA: 0, rB: 0, oA: [aL, aW], oB: [bL, bW], n, depth: blocksW * blockW,
           pattern: 'pinwheel', blocksL, blocksW, blockL, blockW };
+      }
+    }
+  }
+  // === 3) 2D 棋盘(checker)交错：A 在 (0,0)，B 在 (aL, aW) 紧接 A 右下角 ===
+  // 块 = (aL+bL) × (aW+bW) 装 2 箱（A TL + B BR 对角），pinwheel 块大小的简化版（去掉 TR+BL 那 2 箱）。
+  // 约束 aL+bL ≤ palletL 且 aW+bW ≤ palletW；blocksL×blocksW 排块，每块 2 箱 = 2×blocksL×blocksW 箱。
+  // 典型 500×280+280×500 in 1070×1070：块 780×780，1 块 × 2 箱 = 2（远小于 row brick 的 7 箱，checker 实际不优）。
+  // 保留此模式仅作完整拓扑枚举，row brick 几乎总是胜出。
+  for (const [aL, aW] of orients) {
+    for (const [bL, bW] of orients) {
+      if (aL + bL > palletL + 1e-6) continue;
+      if (aW + bW > palletW + 1e-6) continue;
+      const blockL = aL + bL, blockW = aW + bW;
+      const blocksL = Math.max(1, Math.floor((palletL + 1e-6) / blockL));
+      const blocksW = Math.max(1, Math.floor((palletW + 1e-6) / blockW));
+      const n = 2 * blocksL * blocksW;
+      if (!best || n > best.n) {
+        best = { rA: 0, rB: 0, oA: [aL, aW], oB: [bL, bW], n, depth: blocksW * blockW,
+          pattern: 'checker', blocksL, blocksW, blockL, blockW };
       }
     }
   }

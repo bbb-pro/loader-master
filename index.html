@@ -150,6 +150,7 @@ const colorCache = {};
 function defaultGood() {
   return { id:++gid, name:'货物'+gid, l:400, w:300, h:300, weight:0, qty:10,
     isPallet:false, palletL:1200, palletW:1000, perPallet:20, palletWeight:0, palletH:150,
+    perPalletManual:false,  // 用户是否手改过「每托数量」；false 时随尺寸/柜高自动跟随
     allowRotate:true, allowInvert:false, priority:2, group:'', maxTopWeight:0 };
 }
 // 勾选「托盘」时「每托数量」的默认值：以「柜内可叠 2 层托盘」为目标，求每托最多能装几箱。
@@ -170,6 +171,38 @@ function calcDefaultPerPallet(g) {
   const layers = Math.max(1, Math.floor(room / boxH));
   return layers * perLayer;
 }
+
+/* ---- 每托数量「未手动编辑则自动跟随」 ----
+   规则：只要用户没手动改过「每托数量」，当影响它的尺寸变化时自动按「叠 2 层托盘」重算。
+   触发源：箱长/宽/高、托盘长/宽/高、集装箱高度。用户一旦手改该字段即锁定，不再自动改写。 */
+const PERPALLET_DEPS = ['l','w','h','palletL','palletW','palletH'];
+const perPalletInput = (card) => card ? card.querySelector('input[data-f="perPallet"]') : null;
+const cardOfGood = (g) => goodsBody.querySelector(`.good-card[data-id="${g.id}"]`);
+
+// 单个货物卡片：重算并写回输入框（未手动编辑时）
+function syncAutoPerPallet(card, g) {
+  if (!g.isPallet || g.perPalletManual) return false;
+  const v = calcDefaultPerPallet(g);
+  if (v === g.perPallet) return false;
+  g.perPallet = v;
+  const inp = perPalletInput(card);
+  if (inp) inp.value = v;
+  return true;
+}
+// 全部货物：柜高变化时用（柜高是全局的，会影响所有托盘货）
+function syncAllAutoPerPallet() {
+  let changed = false;
+  for (const g of goods) if (syncAutoPerPallet(cardOfGood(g), g)) changed = true;
+  if (changed) updateTheory();
+  return changed;
+}
+// 防抖：calcDefaultPerPallet 内含 2D 搜索，逐键重算会卡，停手 300ms 后再算
+let _autoPPTimer = null;
+function scheduleAutoPerPallet(fn) {
+  clearTimeout(_autoPPTimer);
+  _autoPPTimer = setTimeout(fn, 300);
+}
+
 // 初始给一个示例
 goods.push(defaultGood());
 
@@ -242,20 +275,29 @@ goodsBody.addEventListener('input', e => {
     if (f === 'isPallet') {
       card.classList.toggle('pallet-on', e.target.checked); // 勾选托盘即显示托盘字段
       if (e.target.checked) {
-        // 勾选时按「柜内可叠 2 层托盘」自动给出每托数量默认值，并同步到输入框
+        // 勾选时按「柜内可叠 2 层托盘」自动给出每托数量默认值，并同步到输入框。
+        // 同时清除「手改」标记，让重新勾选后恢复自动跟随。
+        g.perPalletManual = false;
         g.perPallet = calcDefaultPerPallet(g);
-        const inp = card.querySelector('input[data-f="perPallet"]');
+        const inp = perPalletInput(card);
         if (inp) inp.value = g.perPallet;
       }
       refreshCardPalletPlan(card, g); // 勾选为离散操作，立即刷新预览无卡顿风险
     }
   }
-  else if (e.target.type === 'number') g[f] = parseFloat(e.target.value) || 0;
+  else if (e.target.type === 'number') {
+    g[f] = parseFloat(e.target.value) || 0;
+    if (f === 'perPallet') g.perPalletManual = true;  // 手改「每托数量」→ 锁定，不再自动跟随
+  }
   else g[f] = e.target.value;
   // 关键修复：输入框实时改动不再「逐键重算」打托方案/理论容量（尺寸瞬态为0会触发除零死循环卡死）。
   // 改为停止输入 500ms 后（或点「开始计算」时统一校验）再计算。
   if (['l','w','palletL','palletW'].includes(f)) schedulePlanRefresh(card, g);
   else updateTheoryDebounced();
+  // 每托数量「未手动编辑则自动跟随」：相关尺寸变化后重算（防抖 300ms）
+  if (PERPALLET_DEPS.includes(f)) scheduleAutoPerPallet(() => {
+    if (syncAutoPerPallet(card, g)) updateTheory();
+  });
 });
 goodsBody.addEventListener('click', e => {
   if (e.target.dataset.act === 'del') {
@@ -1142,6 +1184,7 @@ function importExcel(file) {
       const pt = row[idx('是否托盘')];       g.isPallet = (pt===true || (''+pt).includes('是'));
       g.palletL = num(row[idx('托盘长')]); g.palletW = num(row[idx('托盘宽')]);
       g.perPallet = num(row[idx('每托数量')]); g.palletWeight = num(row[idx('托盘重量')]); g.palletH = num(row[idx('托盘高')]);
+      g.perPalletManual = true;   // Excel 里显式给了每托数量，视为用户手改，不自动跟随
       const ar = row[idx('允许旋转')]; g.allowRotate = !(ar===false || (''+ar).includes('否'));
       const ai = row[idx('允许倒置')]; g.allowInvert = !(ai===false || (''+ai).includes('否'));
       g.priority = num(row[idx('优先级')]) || 2; g.group = row[idx('分组')] ?? '';
@@ -1555,8 +1598,12 @@ document.getElementById('ctype').addEventListener('change', e => {
   if (p) { document.getElementById('cl').value=p.l; document.getElementById('cw').value=p.w;
     document.getElementById('ch').value=p.h;     document.getElementById('cm').value=p.maxLoad; }
   updateTheoryDebounced();
+  scheduleAutoPerPallet(syncAllAutoPerPallet);   // 换柜型→柜高变→未手改的每托数量自动跟随
 });
-['cl','cw','ch','cgap'].forEach(id => document.getElementById(id).addEventListener('input', updateTheoryDebounced));
+['cl','cw','ch','cgap'].forEach(id => document.getElementById(id).addEventListener('input', () => {
+  updateTheoryDebounced();
+  if (id === 'ch') scheduleAutoPerPallet(syncAllAutoPerPallet);  // 只有柜高影响「每托数量」
+}));
 document.getElementById('btnAdd').onclick = () => { goods.push(defaultGood()); renderGoods(); updateTheory(); };
 document.getElementById('btnClear').onclick = () => { goods = []; renderGoods(); updateTheory(); };
 document.getElementById('btnTpl').onclick = downloadTemplate;

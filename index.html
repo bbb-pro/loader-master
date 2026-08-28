@@ -1284,11 +1284,30 @@ function theoryCapacity(spec, gap, g) {
     return { unit:'托', total: best*layers, perLayer: best, layers, boxEquiv: best*layers*per, palletHmm: unitH, boxLayers: unitLayers, perLayer0 };
   } else {
     const bl=+g.l, bw=+g.w, bh=+g.h;
-    const orients=[[bl,bw,bh],[bl,bh,bw],[bw,bl,bh],[bw,bh,bl],[bh,bl,bw],[bh,bw,bl]];
+    const base=[bl,bw,bh];
+    // 与 3D(packUniformGrid) 一致：尊重「允许旋转 / 允许倒置」约束，否则理论会高估容量。
+    // 典型：500×280×120 在 1070×1070×700 木箱，32 箱需把 280 边立为高度=倒置；
+    //   若 允许倒置 关闭(默认)，真实最大仅 30，理论不应报 32（之前 theory 忽略该开关导致 32≠30）。
+    const orients=[[base[0],base[1],base[2]],[base[0],base[2],base[1]],
+                   [base[1],base[0],base[2]],[base[1],base[2],base[0]],
+                   [base[2],base[0],base[1]],[base[2],base[1],base[0]]];
+    const valid = orients.filter(p => {
+      if (!g.allowRotate && (p[0]!==base[0]||p[1]!==base[1])) return false;
+      if (!g.allowInvert && p[2]!==base[2]) return false;
+      return true;
+    });
+    // 水平方向(长/宽)按箱间隙留空，与 3D 一致；高度方向不预留间隙(gz=0)
+    const gx=+gap, gy=+gap;
+    const fitCount = (total, unit, g0) => {
+      if (!(unit>0)) return 0;
+      if (g0 <= 0) return Math.floor(total/unit);
+      const m = (total - 2*g0 - unit)/(unit+g0);
+      return m < 0 ? 0 : Math.floor(m) + 1;
+    };
     let best=null;
-    for (const [uL,uW,uH] of orients) {
+    for (const [uL,uW,uH] of valid) {
       if (uH > H+0.01) continue;
-      const per=Math.floor(L/uL)*Math.floor(W/uW);
+      const per=fitCount(L,uL,gx)*fitCount(W,uW,gy);
       const layers=Math.floor(H/uH);
       const total=per*layers;
       // 比较「总箱数 per×层数」，而非仅「单层 per」：

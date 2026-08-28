@@ -152,6 +152,24 @@ function defaultGood() {
     isPallet:false, palletL:1200, palletW:1000, perPallet:20, palletWeight:0, palletH:150,
     allowRotate:true, allowInvert:false, priority:2, group:'', maxTopWeight:0 };
 }
+// 勾选「托盘」时「每托数量」的默认值：以「柜内可叠 2 层托盘」为目标，求每托最多能装几箱。
+// 推导：一层整托高 = 托盘高 + 层数×箱高，叠 2 层需 2×(托盘高 + 层数×箱高) ≤ 柜高
+//   → 层数 = floor((柜高/2 - 托盘高) / 箱高)；每托数量 = 层数 × 每层箱数
+// 每层箱数用 2D 搜索(palletLevelLayout)求真实最大值（含交错/田字/棋盘），与打托方案一致。
+// 边界：柜高/2 - 托盘高 < 箱高（托盘过高或箱过高，物理上叠不了 2 层）时退化为 1 层，避免 0/负数。
+function calcDefaultPerPallet(g) {
+  const el = document.getElementById('ch');
+  const H = el ? (+el.value || 0) : 0;
+  const boxH = +g.h || 0, palletH = +g.palletH || 0;
+  const pl = +g.palletL || 0, pw = +g.palletW || 0, bl = +g.l || 0, bw = +g.w || 0;
+  const fallback = Math.max(1, +g.perPallet || 1);
+  if (!(H > 0 && boxH > 0 && pl > 0 && pw > 0 && bl > 0 && bw > 0)) return fallback;
+  const lay = palletLevelLayout(pl, pw, bl, bw);
+  const perLayer = (lay && lay.n > 0) ? lay.n : Math.max(1, Math.floor(pl/bl) * Math.floor(pw/bw));
+  const room = H/2 - palletH;                       // 2 层托盘时每托可用于堆箱的高度
+  const layers = Math.max(1, Math.floor(room / boxH));
+  return layers * perLayer;
+}
 // 初始给一个示例
 goods.push(defaultGood());
 
@@ -223,6 +241,12 @@ goodsBody.addEventListener('input', e => {
     g[f] = e.target.checked;
     if (f === 'isPallet') {
       card.classList.toggle('pallet-on', e.target.checked); // 勾选托盘即显示托盘字段
+      if (e.target.checked) {
+        // 勾选时按「柜内可叠 2 层托盘」自动给出每托数量默认值，并同步到输入框
+        g.perPallet = calcDefaultPerPallet(g);
+        const inp = card.querySelector('input[data-f="perPallet"]');
+        if (inp) inp.value = g.perPallet;
+      }
       refreshCardPalletPlan(card, g); // 勾选为离散操作，立即刷新预览无卡顿风险
     }
   }

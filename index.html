@@ -683,59 +683,11 @@ function packUniformGrid(items, spec, gap, ORDER, f) {
   const warnings = [];
   // 按 palletLevelLayout 结果精确生成每层所有槽位 (x,y,orient) 列表
   // orient = 'A' 表示 [uL,uW] 朝向，'B' 表示 [oB.L, oB.W] 朝向
-  const layerSlots = (() => {
-    const lay = best.layout;
-    // 优先使用 layerPackSearch 返回的精确坐标（search2d）：每个箱带自身 (x,y,oL,oW)
-    if (lay && lay.coords && lay.coords.length) {
-      return lay.coords.map(c => ({ x: c.x, y: c.y, oL: c.oL, oW: c.oW }));
-    }
-    if (!lay) {
-      // 退化：均匀网格
-      const out = [];
-      for (let j=0;j<best.uW_grid?.()??0;j++) {}  // 不进
-      return null;
-    }
-    const slots = [];
-    if (lay.pattern === 'row' || lay.pattern === 'single') {
-      // 行式：rA 行 A 在上 + rB 行 B 在下（按 palletLevelLayout 顺序 y 累加）
-      let yc = 0;
-      for (let r = 0; r < (lay.rA||0); r++) {
-        for (let xi = 0; xi < Math.floor(L / lay.oA[0]); xi++) slots.push({ x: xi*lay.oA[0], y: yc, oL: lay.oA[0], oW: lay.oA[1] });
-        yc += lay.oA[1];
-      }
-      for (let r = 0; r < (lay.rB||0); r++) {
-        for (let xi = 0; xi < Math.floor(L / lay.oB[0]); xi++) slots.push({ x: xi*lay.oB[0], y: yc, oL: lay.oB[0], oW: lay.oB[1] });
-        yc += lay.oB[1];
-      }
-    } else if (lay.pattern === 'pinwheel') {
-      // 田字：每块 4 箱 A 在 TL+BR、B 在 TR+BL；blocksL×blocksW 排块
-      const aL=lay.oA[0], aW=lay.oA[1], bL=lay.oB[0], bW=lay.oB[1];
-      const blockL=lay.blockL||(aL+bL), blockW=lay.blockW||(aW+bW);
-      for (let bx=0; bx<(lay.blocksL||1); bx++)
-        for (let by=0; by<(lay.blocksW||1); by++) {
-          const ox=bx*blockL, oy=by*blockW;
-          // TL: A
-          slots.push({ x: ox, y: oy, oL: aL, oW: aW });
-          // TR: B
-          slots.push({ x: ox+aL, y: oy, oL: bL, oW: bW });
-          // BL: B
-          slots.push({ x: ox, y: oy+aW, oL: bL, oW: bW });
-          // BR: A
-          slots.push({ x: ox+bL, y: oy+bW, oL: aL, oW: aW });
-        }
-    } else if (lay.pattern === 'checker') {
-      // 2D 棋盘：每块 2 箱 A 在 (0,0) + B 在 (aL, aW) 紧接 A 右下；blocksL×blocksW 排块
-      const aL=lay.oA[0], aW=lay.oA[1], bL=lay.oB[0], bW=lay.oB[1];
-      const blockL=lay.blockL||(aL+bL), blockW=lay.blockW||(aW+bW);
-      for (let bx=0; bx<(lay.blocksL||1); bx++)
-        for (let by=0; by<(lay.blocksW||1); by++) {
-          const ox=bx*blockL, oy=by*blockW;
-          slots.push({ x: ox, y: oy, oL: aL, oW: aW });
-          slots.push({ x: ox+aL, y: oy+aW, oL: bL, oW: bW });
-        }
-    }
-    return slots;
-  })();
+  // 每层槽位 = layerPackSearch 搜出的精确坐标（每个箱自带 x,y,oL,oW）。
+  // palletLevelLayout 现在统一返回 coords，旧的 row/pinwheel/checker 分支已全部移除。
+  const layerSlots = (best.layout && best.layout.coords && best.layout.coords.length)
+    ? best.layout.coords.map(c => ({ x: c.x, y: c.y, oL: c.oL, oW: c.oW }))
+    : null;
 
   let idx = 0;
   while (idx < items.length) {
@@ -1320,27 +1272,13 @@ function theoryCapacity(spec, gap, g) {
     const perLayer0 = (brickL && brickL.n>0) ? brickL.n : singlePerLayer;
     const unitLayers=Math.max(1,Math.ceil(per/perLayer0)), gH=unitLayers*bh;
     const unitH=pH+gH;
-    // 交错码盘容量：枚举「r1 行用朝向 A + r2 行用朝向 B」，求 r1*floor(L/uAL)+r2*floor(L/uBL) 最大, 约束 r1*uAW + r2*uBW ≤ W
-    const orients = [[pl,pw],[pw,pl]];  // 两朝向(L沿柜, W沿柜)
-    let best = 0;
-    const minPP = Math.min(pl, pw);
-    const ROW_MAX = minPP > 0 ? Math.max(1, Math.floor(W / minPP)) : 0;  // 防御：托盘尺寸为0时避免 W/0=Infinity 死循环
-    for (let r1 = 0; r1 <= ROW_MAX; r1++) {
-      for (let r2 = 0; r2 <= ROW_MAX - r1; r2++) {
-        for (const [uAL,uAW] of orients) {
-          for (const [uBL,uBW] of orients) {
-            const depth = r1*uAW + r2*uBW;
-            if (depth > W + 1e-6) continue;
-            const n1 = r1 * Math.floor(L/uAL);
-            const n2 = r2 * Math.floor(L/uBL);
-            if (n1+n2 > best) best = n1+n2;
-          }
-        }
-      }
-    }
+    // 整托在柜内的摆放：同样用 2D 搜索（把「整托底面」当作一个矩形件在柜底排布），
+    // 取代原先手写的「r1 行 A + r2 行 B」枚举——搜索更准且与普通纸箱路径共用同一套算法。
+    const palletLay = palletLevelLayout(L, W, pl, pw);
+    let best = (palletLay && palletLay.n > 0) ? palletLay.n : 0;
     if (best <= 0) {
-      // 退化：非矩形（正方形托盘）或单朝向即可
-      for (const [uL,uW] of orients) { const n = Math.floor(L/uL)*Math.floor(W/uW); if (n > best) best = n; }
+      // 退化：单朝向网格（柜底放不下整托时的兜底）
+      for (const [uL,uW] of [[pl,pw],[pw,pl]]) { const n = Math.floor(L/uL)*Math.floor(W/uW); if (n > best) best = n; }
     }
     const layers = Math.max(1, Math.floor(H/unitH));
     return { unit:'托', total: best*layers, perLayer: best, layers, boxEquiv: best*layers*per, palletHmm: unitH, boxLayers: unitLayers, perLayer0 };
@@ -1438,7 +1376,7 @@ function layerPackSearch(L, W, boxL, boxW, gx, gy) {
   };
   let best = quickLayout();
   const visited = new Set();
-  let nodes = 0; const NODE_CAP = 4000000;
+  let nodes = 0; const NODE_CAP = 4000000, VISIT_CAP = 300000;
   const T0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   const timeout = () => {
     const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
@@ -1479,8 +1417,14 @@ function layerPackSearch(L, W, boxL, boxW, gx, gy) {
         if (overlaps(x, y, oL, oW)) continue;
         placed.push({ x, y, oL, oW });
         lastY = y; lastX = x;
-        const s = sig();
-        if (!visited.has(s)) { visited.add(s); dfs(); }
+        // visited 用于去除「同一组箱的排列顺序不同」造成的重复搜索。
+        // 加容量上限：极端输入下防止 Set 无限增长耗尽内存（超限后退化为不去重，仍有超时/节点数护栏）。
+        if (visited.size < VISIT_CAP) {
+          const s = sig();
+          if (!visited.has(s)) { visited.add(s); dfs(); }
+        } else {
+          dfs();
+        }
         placed.pop();
         lastY = prevY; lastX = prevX;  // 回溯到本层基准，避免漏解
       }
@@ -1518,59 +1462,11 @@ function palletPlanSVG(layout, palletL, palletW, opts) {
   const FILL_A = '#fef3c7', STROKE_A = '#d97706';   // 朝向 A：橙黄
   const FILL_B = '#dbeafe', STROKE_B = '#2563eb';   // 朝向 B：蓝
 
-  if (layout.coords && layout.coords.length) {
-    // 2D 搜索结果（search2d）：直接按坐标画每个箱，A/B 朝向用不同配色
-    for (const c of layout.coords) {
-      const isA = (Math.abs(c.oL - layout.oA[0]) < 1e-6 && Math.abs(c.oW - layout.oA[1]) < 1e-6);
-      html += boxRect(x0 + c.x * scale, y0 + c.y * scale, c.oL * scale, c.oW * scale,
-        isA ? FILL_A : FILL_B, isA ? STROKE_A : STROKE_B);
-    }
-  } else if (layout.pattern === 'pinwheel') {
-    // 田字：每块 4 个箱（A 在 TL+BR、B 在 TR+BL），可堆多块
-    const aL = layout.oA[0], aW = layout.oA[1];
-    const bL = layout.oB[0], bW = layout.oB[1];
-    const blockL = layout.blockL || (aL + bL);
-    const blockW = layout.blockW || (aW + bW);
-    const blocksL = layout.blocksL || 1;
-    const blocksW = layout.blocksW || 1;
-    for (let bx = 0; bx < blocksL; bx++) {
-      for (let by = 0; by < blocksW; by++) {
-        const ox = x0 + bx * blockL * scale;
-        const oy = y0 + by * blockW * scale;
-        // TL：A 朝向
-        html += boxRect(ox, oy, aL * scale, aW * scale, FILL_A, STROKE_A);
-        // TR：B 朝向
-        html += boxRect(ox + aL * scale + gap, oy, bL * scale, bW * scale, FILL_B, STROKE_B);
-        // BL：B 朝向
-        html += boxRect(ox, oy + aW * scale + gap, bL * scale, bW * scale, FILL_B, STROKE_B);
-        // BR：A 朝向
-        html += boxRect(ox + bL * scale + gap, oy + bW * scale + gap, aL * scale, aW * scale, FILL_A, STROKE_A);
-      }
-    }
-  } else {
-    // 行式（row / single）：每个 row 用同一种朝向，沿 W 方向逐行堆叠
-    let yc = y0;
-    for (let r = 0; r < (layout.rA || 0); r++) {
-      const rowW = layout.oA[1] * scale;
-      const rowL = layout.oA[0] * scale;
-      const n = Math.floor(palletL / layout.oA[0]);
-      for (let i = 0; i < n; i++) {
-        const bx = x0 + i * (rowL + gap);
-        html += boxRect(bx, yc, rowL, rowW, FILL_A, STROKE_A);
-      }
-      yc += rowW + gap;
-    }
-    for (let r = 0; r < (layout.rB || 0); r++) {
-      if (!layout.oB) break;
-      const rowW = layout.oB[1] * scale;
-      const rowL = layout.oB[0] * scale;
-      const n = Math.floor(palletL / layout.oB[0]);
-      for (let i = 0; i < n; i++) {
-        const bx = x0 + i * (rowL + gap);
-        html += boxRect(bx, yc, rowL, rowW, FILL_B, STROKE_B);
-      }
-      yc += rowW + gap;
-    }
+  // 直接按 layerPackSearch 的精确坐标画每个箱，A/B 朝向用不同配色
+  for (const c of layout.coords) {
+    const isA = (Math.abs(c.oL - layout.oA[0]) < 1e-6 && Math.abs(c.oW - layout.oA[1]) < 1e-6);
+    html += boxRect(x0 + c.x * scale, y0 + c.y * scale, c.oL * scale, c.oW * scale,
+      isA ? FILL_A : FILL_B, isA ? STROKE_A : STROKE_B);
   }
 
   // 角标尺寸文字
@@ -1588,28 +1484,13 @@ function renderPalletPlanText(g) {
   const lA = layout.oA[0], wA = layout.oA[1];
   const lB = layout.oB ? layout.oB[0] : 0, wB = layout.oB ? layout.oB[1] : 0;
   const pl = +g.palletL, pw = +g.palletW;
-  if (layout.coords && layout.coords.length) {
-    // 2D 搜索结果（search2d）：统计 A/B 两种朝向各几个，并给出实际占用包络
-    let nA = 0, nB = 0, usedL = 0, usedW = 0;
-    for (const c of layout.coords) {
-      if (Math.abs(c.oL - lA) < 1e-6 && Math.abs(c.oW - wA) < 1e-6) nA++; else nB++;
-      usedL = Math.max(usedL, c.x + c.oL); usedW = Math.max(usedW, c.y + c.oW);
-    }
-    return `每托每层 ${layout.n} 个（2D 棋盘交错：A 朝向 ${lA}×${wA} × ${nA} 个 + B 朝向 ${lB}×${wB} × ${nB} 个），占用 ${Math.round(usedL)}×${Math.round(usedW)} / ${pl}×${pw}mm`;
+  // 统计 A/B 两种朝向各几个，并给出实际占用包络
+  let nA = 0, nB = 0, usedL = 0, usedW = 0;
+  for (const c of layout.coords) {
+    if (Math.abs(c.oL - lA) < 1e-6 && Math.abs(c.oW - wA) < 1e-6) nA++; else nB++;
+    usedL = Math.max(usedL, c.x + c.oL); usedW = Math.max(usedW, c.y + c.oW);
   }
-  if (layout.pattern === 'pinwheel') {
-    const usedL = (layout.blockL || 0) * (layout.blocksL || 1);
-    const usedW = (layout.blockW || 0) * (layout.blocksW || 1);
-    const blockDesc = (layout.blocksL || 1) === 1 && (layout.blocksW || 1) === 1
-      ? '4 个'
-      : `${layout.blocksL}×${layout.blocksW} 块、每块 4 个、共 ${layout.n} 个`;
-    return `每托每层 ${layout.n} 个（田字交错：${blockDesc}；A 朝向 ${lA}×${wA} 在 TL+BR，B 朝向 ${lB}×${wB} 在 TR+BL），占用 ${usedL}×${usedW} / ${pl}×${pw}mm`;
-  }
-  const parts = [];
-  if (layout.rA > 0) parts.push(`${layout.rA}行×${Math.floor(pl / lA)}个（${lA}×${wA} 朝向）`);
-  if (layout.rB > 0) parts.push(`${layout.rB}行×${Math.floor(pl / lB)}个（${lB}×${wB} 朝向）`);
-  const depthTotal = (layout.rA || 0) * wA + (layout.rB || 0) * wB;
-  return `每托每层 ${layout.n} 个（${parts.join(' + ')}），占用深度 ${depthTotal} / ${pw}mm`;
+  return `每托每层 ${layout.n} 个（2D 棋盘交错：A 朝向 ${lA}×${wA} × ${nA} 个 + B 朝向 ${lB}×${wB} × ${nB} 个），占用 ${Math.round(usedL)}×${Math.round(usedW)} / ${pl}×${pw}mm`;
 }
 
 function getRefGood(){ for (const g of goods) { if ((+g.l>0)&&(+g.w>0)&&(+g.h>0)) return g; } return null; }

@@ -1531,6 +1531,57 @@ function layerPackSearch(L, W, boxL, boxW, gx, gy) {
       }
       consider(coords);
     }
+    // 阶梯错位（双横带 + 右端竖插/顶角补位）：
+    // 覆盖 DFS 才能发现的「非整行同朝向」拓扑。典型场景 20GP 5940×2340 放 1200×1000 托盘：
+    //   当前行式交错只能整行同朝向，得上界 9 托/层；而完整 DFS 能摆出 10 托——下带 4A+尾竖B，
+    //   上带只铺 3A 让出右端，右端再竖 B + 顶角 A 骑跨，把第 10 托塞进 5940÷1200 余出的 140mm 错缝。
+    // 本构造把该「两带错位」拓扑参数化枚举，交给下方 noOverlap 过滤，纯增量（放不下即被拒，绝不降低数量）。
+    const stair = () => {
+      const sa = Math.max(boxL, boxW), sb = Math.min(boxL, boxW);  // a 长边、b 短边；A=(a,b) 横、B=(b,a) 竖
+      const res = [];
+      if (!(sa > 0 && sb > 0) || 2 * sb > W + 1e-6) return res;     // 需放得下两条 A 横带(高各 b)
+      const nBotMax = Math.floor(L / sa);
+      for (let nBot = 1; nBot <= nBotMax; nBot++) {
+        const xBotEnd = nBot * sa;
+        for (const hasTail of [false, true]) {                       // 下带尾部是否竖 B(宽 b、高 a)
+          if (hasTail && (xBotEnd + sb > L + 1e-6 || sa > W + 1e-6)) continue;
+          const xBB_L = xBotEnd, xBB = hasTail ? xBotEnd + sb : xBotEnd;  // 下带竖B x 区间
+          const topCap = hasTail ? xBB_L : L;                        // 上带 A 右端上限(避免压到竖B)
+          for (let nTop = 1; nTop * sa <= topCap - 1e-6; nTop++) {
+            const xTopEnd = nTop * sa;                               // 上带 A 右端 = 右侧自由区起点
+            for (const hasUpB of [false, true]) {                    // 右侧是否再竖 B
+              if (hasUpB && (xTopEnd + sb > L + 1e-6 || sb + sa > W + 1e-6)) continue;
+              if (hasUpB && hasTail) {                               // 上下两竖B 需 x 错开(高均穿至 a)
+                if (sa > sb && !(xTopEnd + sb <= xBB_L - 1e-6 || xTopEnd >= xBB - 1e-6)) continue;
+              }
+              const xAfter = hasUpB ? xTopEnd + sb : xTopEnd;        // 右侧占用后的右端起点
+              const freeW = L - xAfter;
+              const putTier = (yTop) => {                            // 顶角 A 于 (xAfter, yTop)，需 yTop 高过下带竖B顶(sa)
+                if (!(freeW >= sa - 1e-6 && yTop + sb <= W + 1e-6)) return;
+                const cs = [];
+                for (let i = 0; i < nBot; i++) cs.push({ x: i * sa, y: 0, oL: sa, oW: sb });
+                if (hasTail) cs.push({ x: xBotEnd, y: 0, oL: sb, oW: sa });
+                for (let i = 0; i < nTop; i++) cs.push({ x: i * sa, y: sb, oL: sa, oW: sb });
+                if (hasUpB) cs.push({ x: xTopEnd, y: sb, oL: sb, oW: sa });
+                cs.push({ x: xAfter, y: yTop, oL: sa, oW: sb });
+                res.push(cs);
+              };
+              // 顶角A 起点：sa(骑下带竖B顶，避开重叠) 与 2*sb(与上带同高) 两候选
+              putTier(sa); putTier(2 * sb);
+              // 不放顶角的纯「下带+上带(让右)+竖B」
+              const cs2 = [];
+              for (let i = 0; i < nBot; i++) cs2.push({ x: i * sa, y: 0, oL: sa, oW: sb });
+              if (hasTail) cs2.push({ x: xBotEnd, y: 0, oL: sb, oW: sa });
+              for (let i = 0; i < nTop; i++) cs2.push({ x: i * sa, y: sb, oL: sa, oW: sb });
+              if (hasUpB) cs2.push({ x: xTopEnd, y: sb, oL: sb, oW: sa });
+              res.push(cs2);
+            }
+          }
+        }
+      }
+      return res;
+    };
+    for (const cs of stair()) consider(cs);
     return { n: bestN, coords: bestCoords };
   };
   let best = quickLayout();

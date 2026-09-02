@@ -60,7 +60,7 @@
           <label class="text-sm" title="仅水平方向(长/宽)留空，便于装卸；高度方向纸箱直接叠放不预留间隙">箱间隙·水平(mm)<input id="cgap" type="number" class="mt-1 border rounded p-2 w-full" value="0"></label>
           <label class="text-sm lg:col-span-2">摆放顺序（装柜优先级）
             <select id="packOrder" class="mt-1 border rounded p-2 w-full">
-              <option value="inside" selected>从里到外（逐层向上，层内由里向外）</option>
+              <option value="inside" selected>从里到外（里端纵深列堆到柜顶，再逐列向柜门）</option>
               <option value="bottom">从下到上（逐层向上，层内沿柜宽）</option>
               <option value="door">从外到里（柜门端优先，列内向上）</option>
               <option value="side">从一侧到另一侧（按柜宽分列，列内向上）</option>
@@ -482,25 +482,25 @@ function packBrick(items, spec, gap, ORDER) {
     containers.push(c);
     const stacks = columns.map(col => ({ x:col.x, y:col.y, L:col.L, W:col.W, usedH:0, items:[] }));
     let progressed = false;
-    // 层优先推进（与 inside/bottom 语义一致，也贴合人工装柜）：
-    //   第 1 轮：给每个列位各放 1 托 —— 铺满底层，按 columns 顺序由里向外
-    //   第 2 轮：给还放得下的列位各再放 1 托 —— 上第 2 层
-    //   ……直到某一轮没有任何列位能再放。
-    // 即「第1托底 → 隔壁第2托底 → 第1托第2层 → 第2托第2层」的交错推进。
-    // 旧实现是「每个列位各自一路堆到柜顶再换下一列」，装不满时会先在里端砌一堵高墙。
-    let anyPlaced = true;
-    while (anyPlaced) {
-      anyPlaced = false;
+    // inside=纵深列优先到顶 / 其余=轮次层推进：
+    //   inside：先取最里端一列(stacks[0])，把能放的托盘一路自底向上堆到柜顶，再往柜门方向推进下一列。
+    //           —— 这是人工装柜真实操作「里端一列堆满到顶 → 隔壁列 → 逐列往门口」。
+    //   bottom/door/side：按每轮给每个仍放得下的列位各放 1 个托盘，逐轮铺满下层再升到上层
+    //           （bottom 是人工打的另一意图：先铺满一层再铺第二层，只是与真实纵深操作不同）。
+    const stackFirst = (ORDER === 'inside');   // inside 采用「单列堆到顶再换列」
+    if (stackFirst) {
+      // 单列优先：对每个列位(已按纵深 xi 由里向外排)，把它一路堆到柜高上限再换下一列
       for (const st of stacks) {
-        let bi = -1, bH = -1;
-        for (let i = 0; i < pool.length; i++) {
-          const p = pool[i];
-          const newH = st.usedH + (+p.H);
-          if (newH > inner.z1 + 1e-6) continue;                       // 超过柜高，放不下
-          if (c.usedWeight + (+p.weight) > maxLoad + 1e-6) continue;   // 超本柜限重
-          if (+p.H > bH) { bH = +p.H; bi = i; }                       // 选最高的可放托盘
-        }
-        if (bi >= 0) {
+        for (;;) {
+          let bi = -1, bH = -1;
+          for (let i = 0; i < pool.length; i++) {
+            const p = pool[i];
+            const newH = st.usedH + (+p.H);
+            if (newH > inner.z1 + 1e-6) continue;                       // 超过柜高，放不下
+            if (c.usedWeight + (+p.weight) > maxLoad + 1e-6) continue;   // 超本柜限重
+            if (+p.H > bH) { bH = +p.H; bi = i; }                       // 选最高的可放托盘
+          }
+          if (bi < 0) break;                                            // 该列堆满/超重，换下一列
           const p = pool[bi];
           c.items.push({
             x: st.x, y: st.y, z: st.usedH,
@@ -514,7 +514,39 @@ function packBrick(items, spec, gap, ORDER) {
           st.usedH += (+p.H);
           st.items.push(p);
           pool.splice(bi, 1);
-          anyPlaced = true; progressed = true;
+          progressed = true;
+        }
+      }
+    } else {
+      // 轮次层推进（bottom/door/side）：每轮给每个仍放得下的列位各放 1 个
+      let anyPlaced = true;
+      while (anyPlaced) {
+        anyPlaced = false;
+        for (const st of stacks) {
+          let bi = -1, bH = -1;
+          for (let i = 0; i < pool.length; i++) {
+            const p = pool[i];
+            const newH = st.usedH + (+p.H);
+            if (newH > inner.z1 + 1e-6) continue;                       // 超过柜高，放不下
+            if (c.usedWeight + (+p.weight) > maxLoad + 1e-6) continue;   // 超本柜限重
+            if (+p.H > bH) { bH = +p.H; bi = i; }                       // 选最高的可放托盘
+          }
+          if (bi >= 0) {
+            const p = pool[bi];
+            c.items.push({
+              x: st.x, y: st.y, z: st.usedH,
+              L: st.L, W: st.W, H: +p.H,
+              name: p.name, refId: p.refId, priority: p.priority, group: p.group,
+              isPallet: true, count: p.count, colorKey: p.colorKey, weight: p.weight,
+              palletH: +p.palletH || 150, goodsH: +p.H - (+p.palletH || 150),
+            });
+            c.usedVol += (st.L * st.W * (+p.H));
+            c.usedWeight += (+p.weight);
+            st.usedH += (+p.H);
+            st.items.push(p);
+            pool.splice(bi, 1);
+            anyPlaced = true; progressed = true;
+          }
         }
       }
     }
@@ -654,11 +686,11 @@ function pack(items, spec, gap, order) {
   }
   // 摆放顺序 -> 代价函数（坐标：X=深度/长度，0=柜里端远端壁，l=柜门端；Y=宽度；Z=高度，0=地面）
   // 易碎/重货(priority=3)始终靠柜门端优先，便于最后装卸
-  // 与 packUniformGrid.keyOf 保持同一套语义：inside/bottom 为层优先(z 主导)，door/side 为列优先
+  // 与 packUniformGrid.keyOf 保持同一套语义：inside 为纵深列优先(x 主导)，bottom 层优先(z 主导)，door/side 为列优先
   function costOf(box, it){
     if (it.priority === 3) return box.z*1e6 + (B.x1 - (box.x+box.L))*1e3 + box.y;
     switch (ORDER) {
-      case 'inside': return box.z*1e6 + box.x*1e3 + box.y;                  // 从里到外：层优先，层内由里向外
+      case 'inside': return box.x*1e6 + box.z*1e3 + box.y;                  // 从里到外：纵深列优先到顶(x主导)，列内自底向上再铺宽
       case 'door':   return (B.x1 - (box.x+box.L))*1e6 + box.z*1e3 + box.y;  // 从外到里：柜门端列优先
       case 'side':   return box.y*1e6 + box.z*1e3 + box.x;                  // 从一侧到另一侧：宽度列优先
       default:       return box.z*1e6 + box.y*1e3 + box.x;                  // 从下到上：层优先，层内沿柜宽
@@ -757,10 +789,26 @@ function packUniformGrid(items, spec, gap, ORDER, f) {
     return max < 0 ? 0 : Math.floor(max) + 1;
   };
   // 选「每柜总箱数」最大的朝向
+  // 性能关键：layerPackSearch 内部已穷举 [uL,uW] 与 [uW,uL] 两种朝向，
+  // 所以传 (600,400) 与 (400,600) 是同一个问题、结果必然相同。
+  // 先把底面规范化成 (min,max) 再缓存 —— 6 个排列通常只剩 2~3 个唯一底面，
+  // 可省掉一半以上搜索（单次最坏 1.2s，6 次就是 7.2s 卡顿）。
+  // 同一底面 + 不同立放高度（uH 不同 → nZ 不同）仍要各自算 total，但共享搜索结果。
+  const layoutCache = new Map();
+  const getLayout = (uL, uW) => {
+    const a = Math.min(uL, uW), b = Math.max(uL, uW);
+    const k = a + 'x' + b;
+    if (!layoutCache.has(k)) layoutCache.set(k, palletLevelLayout(L, W, a, b, gx, gy));
+    return layoutCache.get(k);
+  };
   let best=null;
+  const seenOrient = new Set();
   for (const [uL,uW,uH] of valid) {
     if (uH > H+0.01) continue;
-    const layout = palletLevelLayout(L, W, uL, uW, gx, gy);
+    const sig = uL+'x'+uW+'x'+uH;
+    if (seenOrient.has(sig)) continue;   // 有两边相等时排列会重复，直接跳过
+    seenOrient.add(sig);
+    const layout = getLayout(uL, uW);
     const nX = (layout && layout.n > 0) ? layout.n : (fitCount(L,uL,gx) * fitCount(W,uW,gy));
     const nZ = fitCount(H, uH, gz);
     const total = nX * nZ;
@@ -769,14 +817,16 @@ function packUniformGrid(items, spec, gap, ORDER, f) {
   if (!best || best.total <= 0) return null;  // 放不下，退回贪心由上层处理
   // 按 ORDER 给网格位置排序（决定 items.length < 容量时优先填哪些槽）
   // 权重设计：主序 *1e6 完全压过次序 *1e3（x/z 最大 12030/2690mm，1e6 量级差足够隔离）
-  //   inside = 层优先(z 主导) + 层内沿深度由里向外 → 第1托底→第2托底→第1托第2层→第2托第2层
+  //   inside = 纵深列优先到顶(x 主导) → 里端列堆到柜顶，再逐列往柜门推进（真实装柜操作）
   //   bottom = 层优先(z 主导) + 层内沿柜宽推进
   //   door   = 柜门端列优先(x 主导)，列内自下而上
   //   side   = 宽度列优先(y 主导)，列内自下而上
   const keyOf = (x,y,z,uL,uW) => {
     if (ORDER==='door')    return (L-(x+uL))*1e6 + z*1e3 + y;
     if (ORDER==='side')    return y*1e6 + z*1e3 + x;
-    if (ORDER==='inside')  return z*1e6 + x*1e3 + y;   // 层优先，层内由里向外
+    // inside = 纵深列优先到顶（用户确认的真实装柜方式）：
+    //   x 主序(0=里端小值先) → 同一纵深排先自底向上堆到柜顶(z) 再沿柜宽(y)铺满，然后往柜门方向推进下一纵深排
+    if (ORDER==='inside')  return x*1e6 + z*1e3 + y;
     return z*1e6 + y*1e3 + x;                          // bottom：层优先，层内沿柜宽
   };
   const interiorVol = L*W*H;
@@ -1404,10 +1454,20 @@ function theoryCapacity(spec, gap, g) {
       return m < 0 ? 0 : Math.floor(m) + 1;
     };
     let best=null;
+    // 性能关键：layerPackSearch 内部已穷举 [uL,uW] 与 [uW,uL] 两种朝向，结果必然相同。
+    // 把底面规范化成 (min,max) 再缓存 —— 6 个排列通常只剩 2~3 个唯一底面，可省掉一半以上搜索。
+    // 此前无缓存时，600×400×400/40HQ 的「每层搜索 ~400ms × 多个朝向」≈ 1.6s 卡顿（顶部理论容量框）。
+    const layoutCache = new Map();
+    const getLayout = (uL, uW) => {
+      const a = Math.min(uL, uW), b = Math.max(uL, uW);
+      const k = a + 'x' + b;
+      if (!layoutCache.has(k)) layoutCache.set(k, palletLevelLayout(L, W, a, b, gx, gy));
+      return layoutCache.get(k);
+    };
     for (const [uL,uW,uH] of valid) {
       if (uH > H+0.01) continue;
       // 每层用 palletLevelLayout 算交错码盘箱数（含行式+田字+2D 棋盘三种拓扑）
-      const layout = palletLevelLayout(L, W, uL, uW, gx, gy);
+      const layout = getLayout(uL, uW);
       const per = (layout && layout.n > 0) ? layout.n : (fitCount(L,uL,gx) * fitCount(W,uW,gy));
       const layers=fitCount(H,uH,0);
       const total=per*layers;
@@ -1474,12 +1534,22 @@ function layerPackSearch(L, W, boxL, boxW, gx, gy) {
     return { n: bestN, coords: bestCoords };
   };
   let best = quickLayout();
+  const LB = best.n;  // quickLayout 给的下界：DFS 若突破不了它，这次搜索就是纯空转
   const visited = new Set();
   let nodes = 0; const NODE_CAP = 4000000, VISIT_CAP = 300000;
-  const T0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  const nowMs = () => (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  const T0 = nowMs();
+  // 双护栏超时：
+  //   ① 硬上限 1.2s —— 无论是否还在出成果都停，兜底防卡 UI
+  //   ② 停滞早停 STALL_MS —— 距「搜索起点」或「上一次刷新 best」超过该值仍无改进，
+  //      判定这片空间无收益，直接放弃（下面 dfs 每突破一次 best 就重置计时）。
+  // 实测 10 个案例：DFS 的有效改进全部发生在 100ms 内（27ms / 87ms 两例），
+  // 而跑满 1.2s 的案例改进次数一律为 0。单次 1.2s × 多个朝向 = 明显卡顿，故加停滞早停。
+  const STALL_MS = 400;
+  let lastGain = T0;
   const timeout = () => {
-    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-    return (now - T0) > 1200;  // 单柜单层搜索硬上限 1.2s，避免卡 UI
+    const now = nowMs();
+    return (now - T0) > 1200 || (now - lastGain) > STALL_MS;
   };
   const sig = () => placed.map(p => p.x.toFixed(1)+','+p.y.toFixed(1)+','+p.oL+','+p.oW).sort().join('|');
   const overlaps = (x, y, oL, oW) => {
@@ -1494,8 +1564,10 @@ function layerPackSearch(L, W, boxL, boxW, gx, gy) {
   // 规范序：每个新箱的底左角 (y,x) 必须 >= 上一箱，避免同构排列爆炸（相同摆放只搜一次）
   let lastY = -1, lastX = -1;
   const dfs = () => {
-    if (placed.length > best.n || (placed.length === best.n && best.coords.length === 0))
+    if (placed.length > best.n || (placed.length === best.n && best.coords.length === 0)) {
+      if (placed.length > LB) lastGain = nowMs();  // 突破 quickLayout 下界：重置停滞计时，继续搜
       best = { n: placed.length, coords: placed.map(p => ({ x: p.x, y: p.y, oL: p.oL, oW: p.oW })) };
+    }
     let used = 0; for (const p of placed) used += p.oL * p.oW;
     if (placed.length + Math.floor((L*W - used) / boxArea) <= best.n) return;  // 面积上界剪枝
     if (++nodes > NODE_CAP || timeout()) return;

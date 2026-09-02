@@ -417,23 +417,6 @@ function packBrick(items, spec, gap, ORDER) {
   const unitH = Math.max(...items.map(it => +it.H));
   const inner = { x0:gx, x1:l-gx, y0:gy, y1:w-gy, z0:0, z1:h-gz };
 
-  // 枚举最优行组合：rA 行用朝向 oA，rB 行用朝向 oB，约束 rA*oAW + rB*oBW ≤ w，求最大 perLayer
-  const minPP = Math.min(pl, pw);
-  const ROW_MAX = minPP > 0 ? Math.max(1, Math.floor(w / minPP)) : 0;  // 防御：托盘尺寸为0时避免 w/0=Infinity 死循环
-  const orients = [[pl,pw],[pw,pl]];
-  let best = 0, bestPlan = null;
-  for (const oA of orients) for (const oB of orients) {
-    for (let rA = 1; rA <= ROW_MAX; rA++) for (let rB = 0; rB <= ROW_MAX - rA; rB++) {
-      const depth = rA*oA[1] + rB*oB[1];
-      if (depth > w + 1e-6) continue;
-      const perLayer = rA*Math.floor(l/oA[0]) + rB*Math.floor(l/oB[0]);
-      if (perLayer > best) { best = perLayer; bestPlan = { oA, oB, rA, rB }; }
-    }
-  }
-  if (!bestPlan) return null;
-  // 按 ORDER 决定行摆放顺序：door/side 把靠近柜门/较外的行先放
-  const rAsFirst = (ORDER === 'door' || ORDER === 'side');
-
   const sortedItems = items.slice();
   sortedItems.sort((a,b) => (a.priority||2)-(b.priority||2) || (b.weight||0)-(a.weight||0));
 
@@ -441,29 +424,61 @@ function packBrick(items, spec, gap, ORDER) {
   const allWarnings = [];
   const maxItemsPerContainer = Math.max(1, Math.floor(maxLoad / Math.max(1, +first.weight || 1)));
 
-  // 预生成整柜「地面列位」（砖砌布局）：地面放 perLayer 个托盘，每列可自下而上堆叠多个托盘
-  const rowDefs = rAsFirst
-    ? [{n: bestPlan.rB, o: bestPlan.oB}, {n: bestPlan.rA, o: bestPlan.oA}]
-    : [{n: bestPlan.rA, o: bestPlan.oA}, {n: bestPlan.rB, o: bestPlan.oB}];
-  let yCursor = inner.y0;
-  const rowsInfo = rowDefs.map(rd => { const info = { n: rd.n, o: rd.o, y0: yCursor }; yCursor += rd.o[1] + gy; return info; });
+  // 层内槽位布局：优先用 2D 精确搜索 palletLevelLayout 的坐标（与「理论容量」完全同一份 coords），
+  // 使 3D 预览 / 俯视图 / 文案 与理论 perLayer 严格一致，消除「理论10但3D仍9」的显示差。
+  // 它能覆盖整行枚举做不到的「stair 双带错位」拓扑：20GP(5940×2340) 放 1200×1000 托盘时
+  //   整行枚举只能上界 9 托/层，而精确搜索能摆 10（下带4A+尾竖B、上带3A让右、右端竖B+顶角A 骑跨）。
+  // 若搜索为空（托盘底面放不进柜），回退到下面的行枚举，保证边界不退化。
+  let layout = null, layoutOk = false;
+  try { if (pl > 0 && pw > 0 && pl <= l + 1e-6 && pw <= w + 1e-6) layout = palletLevelLayout(l, w, pl, pw); } catch (e) { layout = null; }
+  if (layout && layout.n > 0 && layout.coords && layout.coords.length > 0) layoutOk = true;
 
   // 列位：固定 (x,y) 与底面尺寸 L/W；同一列位可向上堆叠多个不同高度的托盘（高度之和 ≤ 柜高）。
   // 这正是「同一底面、不同打托高度的两类托盘可叠放」：1050mm 托 + 1350mm 托 = 2400mm ≤ 2690mm，
   // 所以一列能放 2 托；而旧算法用 unitH=max 强制每层等高，导致两类托盘都只能各放 1 层。
-  const columns = [];
-  for (let ri = 0; ri < rowsInfo.length; ri++) {
-    const rd = rowsInfo[ri];
-    if (rd.n === 0) continue;  // 跳过最佳方案中为 0 的"空朝向"行，避免越界列位
-    const perRow = Math.floor(l / rd.o[0]);
-    for (let xi = 0; xi < perRow; xi++) {
-      columns.push({
-        x: inner.x0 + xi*(rd.o[0]+gx),
-        y: rd.y0,
-        L: rd.o[0], W: rd.o[1],
-        // 从里到外：x(里→外) 优先；其余：行优先
-        key: (ORDER === 'inside') ? xi*1e4 + ri : ri*1e4 + xi,
-      });
+  let columns = [];
+  const makeKey = (x, y, oL, oW) => {
+    // 从实际坐标推导摆放先后：inside=纵深列(x 里→外)优先；door=柜门端列优先；side=按柜宽(y)分列；其余=层优先
+    const cx = Math.round(x), cy = Math.round(y);
+    if (ORDER === 'inside') return cx * 1e6 + cy * 1e3;         // x(纵深) 主导，同 x 再按 y
+    if (ORDER === 'door')   return (Math.round(l - (x + oL))) * 1e6 + cy * 1e3; // 靠柜门(x 大)优先
+    if (ORDER === 'side')   return cy * 1e6 + cx * 1e3;         // y(柜宽) 主导
+    return cy * 1e6 + cx * 1e3;                                 // bottom：行(y)主导的层优先（与纵深无关的兜底）
+  };
+  if (layoutOk) {
+    columns = layout.coords.map(c => ({
+      x: c.x, y: c.y,
+      L: c.oL, W: c.oW,
+      key: makeKey(c.x, c.y, c.oL, c.oW),
+    }));
+  } else {
+    // 回退：枚举最优行组合 rA 行 A 朝向 + rB 行 B 朝向，约束 rA*oAW + rB*oBW ≤ w，求最大 perLayer
+    const minPP = Math.min(pl, pw);
+    const ROW_MAX = minPP > 0 ? Math.max(1, Math.floor(w / minPP)) : 0;  // 防御：托盘尺寸为0时避免 w/0=Infinity 死循环
+    const orients = [[pl,pw],[pw,pl]];
+    let best = 0, bestPlan = null;
+    for (const oA of orients) for (const oB of orients) {
+      for (let rA = 1; rA <= ROW_MAX; rA++) for (let rB = 0; rB <= ROW_MAX - rA; rB++) {
+        const depth = rA*oA[1] + rB*oB[1];
+        if (depth > w + 1e-6) continue;
+        const perLayer = rA*Math.floor(l/oA[0]) + rB*Math.floor(l/oB[0]);
+        if (perLayer > best) { best = perLayer; bestPlan = { oA, oB, rA, rB }; }
+      }
+    }
+    if (!bestPlan) return null;
+    const rAsFirst = (ORDER === 'door' || ORDER === 'side');
+    const rowDefs = rAsFirst
+      ? [{n: bestPlan.rB, o: bestPlan.oB}, {n: bestPlan.rA, o: bestPlan.oA}]
+      : [{n: bestPlan.rA, o: bestPlan.oA}, {n: bestPlan.rB, o: bestPlan.oB}];
+    let yCursor = inner.y0, ri = 0;
+    for (const rd of rowDefs) {
+      if (rd.n === 0) continue;  // 跳过最佳方案中为 0 的"空朝向"行，避免越界列位
+      const perRow = Math.floor(l / rd.o[0]);
+      for (let xi = 0; xi < perRow; xi++) {
+        columns.push({ x: inner.x0 + xi*(rd.o[0]+gx), y: yCursor, L: rd.o[0], W: rd.o[1],
+          key: (ORDER === 'inside') ? xi*1e4 + ri : ri*1e4 + xi });
+      }
+      yCursor += rd.o[1] + gy; ri++;
     }
   }
   if (columns.length === 0) return null;  // 托盘底面放不进柜：退回贪心
@@ -572,7 +587,7 @@ function packBrick(items, spec, gap, ORDER) {
     if (!progressed) break;  // 实在放不下，跳出（理论上不会到这）
   }
   if (containers.length === 0) return null;
-  return { containers, warnings: allWarnings, spec, gap, interiorVol, maxLoad, _plan: 'brick', _perLayer: bestPlan.rA*Math.floor(l/bestPlan.oA[0]) + bestPlan.rB*Math.floor(l/bestPlan.oB[0]) };
+  return { containers, warnings: allWarnings, spec, gap, interiorVol, maxLoad, _plan: 'brick', _perLayer: columns.length };
 }
 
 function pack(items, spec, gap, order) {

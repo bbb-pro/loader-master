@@ -60,10 +60,10 @@
           <label class="text-sm" title="仅水平方向(长/宽)留空，便于装卸；高度方向纸箱直接叠放不预留间隙">箱间隙·水平(mm)<input id="cgap" type="number" class="mt-1 border rounded p-2 w-full" value="0"></label>
           <label class="text-sm lg:col-span-2">摆放顺序（装柜优先级）
             <select id="packOrder" class="mt-1 border rounded p-2 w-full">
-              <option value="bottom">从下到上（底层优先，层内由里向外）</option>
-              <option value="inside" selected>从里到外（柜里端优先，再向上）</option>
-              <option value="door">从外到里（柜门端优先）</option>
-              <option value="side">从一侧到另一侧（宽度方向优先）</option>
+              <option value="inside" selected>从里到外（逐层向上，层内由里向外）</option>
+              <option value="bottom">从下到上（逐层向上，层内沿柜宽）</option>
+              <option value="door">从外到里（柜门端优先，列内向上）</option>
+              <option value="side">从一侧到另一侧（按柜宽分列，列内向上）</option>
             </select>
           </label>
         </div>
@@ -482,10 +482,16 @@ function packBrick(items, spec, gap, ORDER) {
     containers.push(c);
     const stacks = columns.map(col => ({ x:col.x, y:col.y, L:col.L, W:col.W, usedH:0, items:[] }));
     let progressed = false;
-    for (const st of stacks) {
-      let placed = true;
-      while (placed) {
-        placed = false;
+    // 层优先推进（与 inside/bottom 语义一致，也贴合人工装柜）：
+    //   第 1 轮：给每个列位各放 1 托 —— 铺满底层，按 columns 顺序由里向外
+    //   第 2 轮：给还放得下的列位各再放 1 托 —— 上第 2 层
+    //   ……直到某一轮没有任何列位能再放。
+    // 即「第1托底 → 隔壁第2托底 → 第1托第2层 → 第2托第2层」的交错推进。
+    // 旧实现是「每个列位各自一路堆到柜顶再换下一列」，装不满时会先在里端砌一堵高墙。
+    let anyPlaced = true;
+    while (anyPlaced) {
+      anyPlaced = false;
+      for (const st of stacks) {
         let bi = -1, bH = -1;
         for (let i = 0; i < pool.length; i++) {
           const p = pool[i];
@@ -508,7 +514,7 @@ function packBrick(items, spec, gap, ORDER) {
           st.usedH += (+p.H);
           st.items.push(p);
           pool.splice(bi, 1);
-          placed = true; progressed = true;
+          anyPlaced = true; progressed = true;
         }
       }
     }
@@ -648,13 +654,14 @@ function pack(items, spec, gap, order) {
   }
   // 摆放顺序 -> 代价函数（坐标：X=深度/长度，0=柜里端远端壁，l=柜门端；Y=宽度；Z=高度，0=地面）
   // 易碎/重货(priority=3)始终靠柜门端优先，便于最后装卸
+  // 与 packUniformGrid.keyOf 保持同一套语义：inside/bottom 为层优先(z 主导)，door/side 为列优先
   function costOf(box, it){
     if (it.priority === 3) return box.z*1e6 + (B.x1 - (box.x+box.L))*1e3 + box.y;
     switch (ORDER) {
-      case 'inside': return box.x*1e6 + box.z*1e3 + box.y;                  // 从里到外：柜里端优先，再向上
-      case 'door':   return (B.x1 - (box.x+box.L))*1e6 + box.z*1e3 + box.y;  // 从外到里：柜门端优先
-      case 'side':   return box.y*1e6 + box.z*1e3 + box.x;                  // 从一侧到另一侧：宽度方向优先
-      default:       return box.z*1e6 + box.x*1e3 + box.y;                  // 从下到上：底层优先，层内由里向外
+      case 'inside': return box.z*1e6 + box.x*1e3 + box.y;                  // 从里到外：层优先，层内由里向外
+      case 'door':   return (B.x1 - (box.x+box.L))*1e6 + box.z*1e3 + box.y;  // 从外到里：柜门端列优先
+      case 'side':   return box.y*1e6 + box.z*1e3 + box.x;                  // 从一侧到另一侧：宽度列优先
+      default:       return box.z*1e6 + box.y*1e3 + box.x;                  // 从下到上：层优先，层内沿柜宽
     }
   }
   function apply(it,c,pl){
@@ -761,11 +768,16 @@ function packUniformGrid(items, spec, gap, ORDER, f) {
   }
   if (!best || best.total <= 0) return null;  // 放不下，退回贪心由上层处理
   // 按 ORDER 给网格位置排序（决定 items.length < 容量时优先填哪些槽）
+  // 权重设计：主序 *1e6 完全压过次序 *1e3（x/z 最大 12030/2690mm，1e6 量级差足够隔离）
+  //   inside = 层优先(z 主导) + 层内沿深度由里向外 → 第1托底→第2托底→第1托第2层→第2托第2层
+  //   bottom = 层优先(z 主导) + 层内沿柜宽推进
+  //   door   = 柜门端列优先(x 主导)，列内自下而上
+  //   side   = 宽度列优先(y 主导)，列内自下而上
   const keyOf = (x,y,z,uL,uW) => {
     if (ORDER==='door')    return (L-(x+uL))*1e6 + z*1e3 + y;
     if (ORDER==='side')    return y*1e6 + z*1e3 + x;
-    if (ORDER==='inside')  return x*1e6 + z*1e3 + y;
-    return z*1e6 + x*1e3 + y;   // bottom（默认）：底层优先、层内由里向外
+    if (ORDER==='inside')  return z*1e6 + x*1e3 + y;   // 层优先，层内由里向外
+    return z*1e6 + y*1e3 + x;                          // bottom：层优先，层内沿柜宽
   };
   const interiorVol = L*W*H;
   const containers = [];

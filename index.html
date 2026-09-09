@@ -1128,6 +1128,9 @@ function initThree() {
   camera = new THREE.PerspectiveCamera(50, W/H, 1, 200000);
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
+  // 滚轮按钮(中键)拖拽 = 平移(pan)，与「Ctrl+左键」同效果，便于不按键盘时拖动视角。
+  // OrbitControls 默认中键是 DOLLY(缩放)，但滚轮本身即可缩放，故把中键让给平移更顺手。
+  controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
   raycaster = new THREE.Raycaster();
   // 屏蔽 canvas 右键菜单，避免与「右键平移」功能冲突
   canvas.addEventListener('contextmenu', e => e.preventDefault());

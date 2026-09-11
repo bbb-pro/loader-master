@@ -4,14 +4,17 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>集装箱装柜计算工具</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+<!-- 依赖全部本地化（libs/ 目录），离线可用、无 CDN 单点故障。
+     tailwind.css 是用 Tailwind CLI 针对本文件扫描生成的静态产物（按需裁剪），
+     取代原先的 cdn.tailwindcss.com（浏览器端 JIT 编译）。改样式后需重新构建：
+       npx tailwindcss -i input.css -o libs/tailwind.css --minify   （content 指向本文件） -->
+<link rel="stylesheet" href="./libs/tailwind.css">
+<script src="./libs/xlsx.full.min.js"></script>
+<script src="./libs/jspdf.umd.min.js"></script>
 <script type="importmap">
 { "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  "three": "./libs/three/three.module.js",
+  "three/addons/": "./libs/three/addons/"
 }}
 </script>
 <style>
@@ -129,6 +132,27 @@
   </div>
 </div>
 
+<!-- 启动自检：three.js 等模块脚本一旦加载失败，其内部代码完全不执行 → 页面白屏且无任何提示。
+     这里用「就绪标记 + 超时」兜底报错。 -->
+<div id="bootError" class="hidden fixed inset-0 z-[9999] bg-slate-900/70 p-6">
+  <div class="max-w-lg mx-auto mt-24 bg-white rounded-xl shadow-lg p-6 text-sm">
+    <h2 class="text-lg font-bold mb-2 text-rose-600">页面资源加载失败</h2>
+    <p class="mb-2">3D 预览所需的组件没有成功加载，可能是 <code>libs/</code> 目录缺失或未随页面一起部署。</p>
+    <p class="text-slate-500">请确认与 <code>index.html</code> 同级存在 <code>libs/</code> 目录（含 three/ 、xlsx.full.min.js、jspdf.umd.min.js、tailwind.css），然后刷新页面。</p>
+  </div>
+</div>
+<script>
+(function () {
+  setTimeout(function () {
+    if (window.__zgmReady) return;
+    var el = document.getElementById('bootError');
+    if (el) el.classList.remove('hidden');
+    var cs = document.getElementById('calcState');
+    if (cs) cs.textContent = '资源加载失败';
+  }, 5000);
+})();
+</script>
+
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -146,6 +170,18 @@ let goods = [];
 let result = null;
 let activeContainer = 0;
 const colorCache = {};
+
+/* ---- HTML 转义 ----
+   所有拼进 innerHTML 的用户可控文本（货物名称、分组名、告警文案等）都必须先过这里。
+   否则：轻则名称里一个引号就截断 input 的 value 属性、卡片错乱；
+   重则导入的 xlsx 名称含 <img onerror=...> 直接执行脚本。 */
+function escapeHtml(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+// HTML 属性值转义（与 escapeHtml 同实现，语义上区分开便于阅读）
+const escapeAttr = escapeHtml;
 
 function defaultGood() {
   return { id:++gid, name:'货物'+gid, l:400, w:300, h:300, weight:0, qty:10,
@@ -215,10 +251,10 @@ function renderGoods() {
     card.className = 'good-card border border-slate-200 rounded-lg p-3 bg-slate-50' + (g.isPallet ? ' pallet-on' : '');
     card.dataset.id = g.id;
     const fld = (f, label, type='number', cls='') =>
-      `<label class="flex flex-col gap-0.5 ${cls}">${label}<input data-f="${f}" type="${type}" value="${g[f] ?? ''}"></label>`;
+      `<label class="flex flex-col gap-0.5 ${cls}">${label}<input data-f="${f}" type="${type}" value="${escapeAttr(g[f] ?? '')}"></label>`;
     card.innerHTML = `
       <div class="flex items-center justify-between mb-2 gap-2">
-        <input data-f="name" class="font-semibold border rounded px-2 py-1 flex-1 min-w-0" value="${g.name}">
+        <input data-f="name" class="font-semibold border rounded px-2 py-1 flex-1 min-w-0" value="${escapeAttr(g.name)}">
         <button data-act="del" class="text-rose-500 text-sm whitespace-nowrap flex-shrink-0">删除</button>
       </div>
       <div class="grid grid-cols-2 gap-2">
@@ -321,12 +357,15 @@ goodsBody.addEventListener('input', e => {
   if (PERPALLET_DEPS.includes(f)) scheduleAutoPerPallet(() => {
     if (syncAutoPerPallet(card, g)) updateTheory();
   });
+  invalidateResult();   // 货物参数变了 → 已算出的方案过期
 });
 goodsBody.addEventListener('click', e => {
   if (e.target.dataset.act === 'del') {
     const card = e.target.closest('.good-card');
     goods = goods.filter(x => x.id != card.dataset.id);
     renderGoods();
+    updateTheory();
+    invalidateResult();
   }
 });
 
@@ -413,8 +452,6 @@ function packBrick(items, spec, gap, ORDER) {
   const first = items[0];
   // buildItems 后托盘项的字段：L/W = 托盘长/宽，H = 托盘高+货物总高；palletH/goodsH 亦保留
   const pl = +first.L, pw = +first.W;
-  // 层高取所有托盘中的最大值，保证整层均匀叠放；半托较矮时置于顶层、其上方留空即可
-  const unitH = Math.max(...items.map(it => +it.H));
   const inner = { x0:gx, x1:l-gx, y0:gy, y1:w-gy, z0:0, z1:h-gz };
 
   const sortedItems = items.slice();
@@ -422,7 +459,19 @@ function packBrick(items, spec, gap, ORDER) {
 
   const containers = [];
   const allWarnings = [];
-  const maxItemsPerContainer = Math.max(1, Math.floor(maxLoad / Math.max(1, +first.weight || 1)));
+
+  // 把一个待装托盘放到某列位的指定高度上（下面「单列堆到顶 / 轮次层推进 / 强制放置」三处共用）
+  const pushPallet = (c, st, p, x, y, z) => {
+    c.items.push({
+      x, y, z,
+      L: st.L, W: st.W, H: +p.H,
+      name: p.name, refId: p.refId, priority: p.priority, group: p.group,
+      isPallet: true, count: p.count, colorKey: p.colorKey, weight: p.weight,
+      palletH: +p.palletH || 150, goodsH: +p.H - (+p.palletH || 150),
+    });
+    c.usedVol += (st.L * st.W * (+p.H));
+    c.usedWeight += (+p.weight);
+  };
 
   // 层内槽位布局：优先用 2D 精确搜索 palletLevelLayout 的坐标（与「理论容量」完全同一份 coords），
   // 使 3D 预览 / 俯视图 / 文案 与理论 perLayer 严格一致，消除「理论10但3D仍9」的显示差。
@@ -437,19 +486,21 @@ function packBrick(items, spec, gap, ORDER) {
   // 这正是「同一底面、不同打托高度的两类托盘可叠放」：1050mm 托 + 1350mm 托 = 2400mm ≤ 2690mm，
   // 所以一列能放 2 托；而旧算法用 unitH=max 强制每层等高，导致两类托盘都只能各放 1 层。
   let columns = [];
-  const makeKey = (x, y, oL, oW) => {
-    // 从实际坐标推导摆放先后：inside=纵深列(x 里→外)优先；door=柜门端列优先；side=按柜宽(y)分列；其余=层优先
+  // 列位摆放先后（key 越小越先堆托）。只用于「地面列位之间」的排序，不涉及高度 z。
+  // side 与 bottom 在此处结果相同：两者的差别在立体码放的「层序」上，而层序由下面的
+  // stackFirst / 轮次推进分支决定；对地面列位本身，二者都是「按柜宽 y 分列，同 y 再按 x」。
+  // 合并成一条公式，避免看起来像笔误而被人改坏其中一个。
+  const makeKey = (x, y, oL) => {
     const cx = Math.round(x), cy = Math.round(y);
-    if (ORDER === 'inside') return cx * 1e6 + cy * 1e3;         // x(纵深) 主导，同 x 再按 y
-    if (ORDER === 'door')   return (Math.round(l - (x + oL))) * 1e6 + cy * 1e3; // 靠柜门(x 大)优先
-    if (ORDER === 'side')   return cy * 1e6 + cx * 1e3;         // y(柜宽) 主导
-    return cy * 1e6 + cx * 1e3;                                 // bottom：行(y)主导的层优先（与纵深无关的兜底）
+    if (ORDER === 'inside') return cx * 1e6 + cy * 1e3;                        // x(纵深) 主导，同 x 再按 y
+    if (ORDER === 'door')   return Math.round(l - (x + oL)) * 1e6 + cy * 1e3;  // 柜门端(x 大)优先
+    return cy * 1e6 + cx * 1e3;                                                // side / bottom：y(柜宽) 主导
   };
   if (layoutOk) {
     columns = layout.coords.map(c => ({
       x: c.x, y: c.y,
       L: c.oL, W: c.oW,
-      key: makeKey(c.x, c.y, c.oL, c.oW),
+      key: makeKey(c.x, c.y, c.oL),
     }));
   } else {
     // 回退：枚举最优行组合 rA 行 A 朝向 + rB 行 B 朝向，约束 rA*oAW + rB*oBW ≤ w，求最大 perLayer
@@ -568,15 +619,7 @@ function packBrick(items, spec, gap, ORDER) {
     // 单托已超柜高/限重导致整柜放不下：强制放一个并告警，避免死循环
     if (!progressed && pool.length > 0) {
       const p = pool.shift();
-      c.items.push({
-        x: stacks[0].x, y: stacks[0].y, z: 0,
-        L: stacks[0].L, W: stacks[0].W, H: +p.H,
-        name: p.name, refId: p.refId, priority: p.priority, group: p.group,
-        isPallet: true, count: p.count, colorKey: p.colorKey, weight: p.weight,
-        palletH: +p.palletH || 150, goodsH: +p.H - (+p.palletH || 150),
-      });
-      c.usedVol += (stacks[0].L * stacks[0].W * (+p.H));
-      c.usedWeight += (+p.weight);
+      pushPallet(c, stacks[0], p, stacks[0].x, stacks[0].y, 0);
       c.warnings.push('单托超柜高/限重，已强制放置: '+p.name+' ('+(+p.H)+'mm)');
       progressed = true;
     }
@@ -670,9 +713,12 @@ function pack(items, spec, gap, order) {
     let maxZ = 0; for (const p of c.points) if (p.z > maxZ) maxZ = p.z;
     const thr = maxZ - keepBelow;
     if (thr <= 0) return; // 还没堆够 2 个箱高，全部保留
-    const kept = c.points.filter(p => p.z >= thr - 1e-6);
+    const kept = [];
+    for (const p of c.points) {
+      if (p.z >= thr - 1e-6) kept.push(p);
+      else c.pointSet.delete(p.x.toFixed(0)+','+p.y.toFixed(0)+','+p.z.toFixed(0));  // 增量删除，不重建 Set
+    }
     c.points = kept;
-    c.pointSet = new Set(c.points.map(p=>p.x.toFixed(0)+','+p.y.toFixed(0)+','+p.z.toFixed(0)));
   }
   function findPlacement(it,c){
     let best=null, bestCost=Infinity, foundZ=null;
@@ -718,11 +764,18 @@ function pack(items, spec, gap, order) {
     c.items.push(box); c.usedVol += pl.L*pl.W*pl.H; c.usedWeight += it.weight;
     c.hash.insert(box);
     addExtremePoints(c, box);
-    // 放置后移除被新箱包住的内部点，保持候选点列表精简
-    c.points = c.points.filter(p => !inside(p.x,p.y,p.z,box));
+    // 放置后移除被新箱包住的内部点，保持候选点列表精简；
+    // 同时从 pointSet 里增量删除对应键（旧实现每次放置都重建整个 Set，累起来是 O(n²)）。
+    if (c.points.length) {
+      const kept = [];
+      for (const p of c.points) {
+        if (inside(p.x,p.y,p.z,box)) c.pointSet.delete(p.x.toFixed(0)+','+p.y.toFixed(0)+','+p.z.toFixed(0));
+        else kept.push(p);
+      }
+      c.points = kept;
+    }
     const oKey = B.x0.toFixed(0)+','+B.y0.toFixed(0)+','+B.z0.toFixed(0);
     if (!c.pointSet.has(oKey)) { c.points.push({x:B.x0,y:B.y0,z:B.z0}); c.pointSet.add(oKey); }
-    c.pointSet = new Set(c.points.map(p=>p.x.toFixed(0)+','+p.y.toFixed(0)+','+p.z.toFixed(0)));
     prunePoints(c);
   }
   const prioOrder = {1:0, 2:1, 3:2};
@@ -873,7 +926,12 @@ function packUniformGrid(items, spec, gap, ORDER, f) {
     const c = { index:containers.length, items:[], usedVol:0, usedWeight:0, warnings:[] };
     for (const s of slots) {
       if (idx >= items.length) break;
-      const it = items[idx++];
+      const it = items[idx];
+      // 限重拆柜：若装入下一件会超本柜限重，就停在本柜、留到下一柜（packBrick 也是这个行为）。
+      // 旧实现只发告警却照样塞满，会给出「一柜装完但严重超重」的误导方案。
+      // 「至少放 1 件」保证单件自身超重时仍能推进，不会死循环。
+      if (c.items.length > 0 && c.usedWeight + (+it.weight) > maxLoad + 1e-6) break;
+      idx++;
       const box = { x:s.x, y:s.y, z:s.z, L:s.oL, W:s.oW, H:best.uH,
         name:it.name, refId:it.refId, priority:it.priority, group:it.group,
         isPallet:false, count:it.count, colorKey:it.colorKey, weight:it.weight };
@@ -897,11 +955,31 @@ function skuColor(key){
   }
   return colorCache[key];
 }
+/* ---- 结果时效性 ----
+   货物或柜型一旦改动，之前算出的方案就不再对应当前输入。
+   此时禁用导出并提示重算，避免把过期方案导出去当作业指令用。 */
+let resultStale = false;
+function invalidateResult() {
+  if (!result) return;
+  resultStale = true;
+  const bx = document.getElementById('btnXls'), bp = document.getElementById('btnPdf');
+  if (bx) bx.disabled = true;
+  if (bp) bp.disabled = true;
+  const cs = document.getElementById('calcState');
+  if (cs) cs.textContent = '结果已过期（货物或柜型已修改），请重新点击「开始计算」';
+}
 function doCalc() {
   const spec = { name:document.getElementById('ctype').value,
     l:+document.getElementById('cl').value, w:+document.getElementById('cw').value,
     h:+document.getElementById('ch').value, maxLoad:+document.getElementById('cm').value };
   const gap = +document.getElementById('cgap').value;
+  invalidateResult();   // 先作废旧结果：即使下面校验不通过，也不会让人导出过期方案
+  // 柜体参数校验：非法输入不能让算法去「强制放置」一堆越界的垃圾结果
+  const bad = [];
+  if (!(spec.l > 0 && spec.w > 0 && spec.h > 0)) bad.push('• 集装箱内尺寸（长/宽/高）必须都大于 0');
+  if (!(spec.maxLoad > 0)) bad.push('• 配货毛重上限必须大于 0');
+  if (!(gap >= 0)) bad.push('• 箱间隙不能为负数');
+  if (bad.length) { alert('⚠ 集装箱配置有误，已停止计算：\n\n' + bad.join('\n')); return; }
   const items = buildItems();
   if (items.length === 0) { alert('请先录入有效货物'); return; }
   // 校验托盘类货物：托盘必须能放下纸箱，放不下时给出明确提示而非卡死/产生非法结果
@@ -914,6 +992,8 @@ function doCalc() {
     if (!lay || lay.n === 0) palletBad.push('• '+g.name+'：托盘（'+pl+'×'+pw+'）放不下纸箱 '+Math.min(bl,bw)+'mm（宽/长均不足且无法旋转）');
   }
   if (palletBad.length) { alert('⚠ 打托配置有误，已停止计算：\n\n'+palletBad.join('\n')+'\n\n请修正托盘/纸箱尺寸后再点「开始计算」。'); return; }
+  document.getElementById('btnXls').disabled = true;   // 计算期间禁止导出（此时结果还是旧的）
+  document.getElementById('btnPdf').disabled = true;
   document.getElementById('calcState').textContent = '计算中…';
   setTimeout(() => {
     const t0 = performance.now();
@@ -921,6 +1001,9 @@ function doCalc() {
     const ms = (performance.now()-t0).toFixed(0);
     document.getElementById('calcState').textContent = '完成，用时 '+ms+'ms，共 '+result.containers.length+' 柜';
     activeContainer = 0;
+    selectedBoxIdx = -1;                       // 换了一批结果，旧的选中下标必须清掉，否则高亮会落到别的箱子上
+    document.getElementById('pickInfo').classList.add('hidden');
+    resultStale = false;
     document.getElementById('threeArea').classList.remove('hidden');
     document.getElementById('summaryArea').classList.remove('hidden');
     document.getElementById('detailArea').classList.remove('hidden');
@@ -950,7 +1033,7 @@ function renderSummary() {
   const w = document.getElementById('warnings');
   const allWarn = [...result.warnings];
   result.containers.forEach(c => c.warnings.forEach(x => allWarn.push('柜'+(c.index+1)+': '+x)));
-  w.innerHTML = allWarn.length ? allWarn.map(x => '<div>⚠ '+x+'</div>').join('') : '<div class="text-emerald-600">✓ 无超重/超体积告警</div>';
+  w.innerHTML = allWarn.length ? allWarn.map(x => '<div>⚠ '+escapeHtml(x)+'</div>').join('') : '<div class="text-emerald-600">✓ 无超重/超体积告警</div>';
 }
 function renderTabs() {
   const t = document.getElementById('tabs');
@@ -959,7 +1042,12 @@ function renderTabs() {
     const b = document.createElement('button');
     b.className = 'rounded px-3 py-1 text-sm border ' + (i===activeContainer?'tab-active':'bg-white');
     b.textContent = '柜'+(i+1)+' · '+(c.loadRate*100).toFixed(0)+'%';
-    b.onclick = () => { activeContainer=i; renderTabs(); renderDetail(); render3D(i); };
+    b.onclick = () => {
+      activeContainer = i;
+      selectedBoxIdx = -1;                                   // 换柜后旧下标失效，必须重置
+      document.getElementById('pickInfo').classList.add('hidden');
+      renderTabs(); renderDetail(); render3D(i);
+    };
     t.appendChild(b);
   });
 }
@@ -971,10 +1059,10 @@ function renderDetail() {
   let rows = c.items.map((b, idx) => {
     const spec = b.L+'×'+b.W+'×'+b.H+' · ('+b.x.toFixed(0)+','+b.y.toFixed(0)+','+b.z.toFixed(0)+')';
     const hl = (idx === selectedBoxIdx) ? ' bg-amber-100' : '';
-    return '<tr class="border-t border-slate-100 cursor-pointer hover:bg-slate-50'+hl+'" data-idx="'+idx+'"><td class="p-1 text-[11px] break-words" style="max-width:90px">'+b.name+'</td>'+
+    return '<tr class="border-t border-slate-100 cursor-pointer hover:bg-slate-50'+hl+'" data-idx="'+idx+'"><td class="p-1 text-[11px] break-words" style="max-width:90px">'+escapeHtml(b.name)+'</td>'+
       '<td class="p-1 text-[11px] whitespace-nowrap">'+spec+'</td>'+
       '<td class="p-1 text-[11px] whitespace-nowrap">'+b.count+'</td>'+
-      '<td class="p-1 text-[11px] whitespace-nowrap">'+b.group+'</td>'+
+      '<td class="p-1 text-[11px] whitespace-nowrap">'+escapeHtml(b.group||'')+'</td>'+
       '<td class="p-1 text-[11px] whitespace-nowrap">'+(b.isPallet?'是':'否')+'</td></tr>';
   }).join('');
   tbl.innerHTML = head + '<tbody>'+rows+'</tbody>';
@@ -983,6 +1071,23 @@ function renderDetail() {
 /* ============ Three.js 3D ============ */
 let renderer, scene, camera, controls, raycaster;
 let selectedBoxIdx = -1;        // 高亮的箱子在 c.items 中的下标（-1表示无）
+let _sceneDirty = true;         // 场景需要重绘（按需渲染用）
+
+// 清空上一次渲染出的货物/线框，并释放 GPU 资源。
+// 只 scene.remove 而不 dispose，几何体与材质会一直留在显存里 —— 反复切柜 tab 会持续泄漏。
+// 场景前 2 个对象是光源（initThree 里只加一次），始终保留。
+function clearSceneObjects() {
+  if (!scene) return;
+  while (scene.children.length > 2) {
+    const obj = scene.children[scene.children.length - 1];
+    scene.remove(obj);
+    obj.traverse(o => {
+      if (o.geometry && o.geometry.dispose) o.geometry.dispose();
+      const m = o.material;
+      if (m) (Array.isArray(m) ? m : [m]).forEach(mm => { if (mm && mm.dispose) mm.dispose(); });
+    });
+  }
+}
 
 function closePickMenu() {
   const pop = document.getElementById('pickInfo');
@@ -990,7 +1095,9 @@ function closePickMenu() {
   if (selectedBoxIdx !== -1) { selectedBoxIdx = -1; render3D(activeContainer); }
 }
 
-// 旋转当前选中箱子的朝向（交换 L/W，保留位置 x/y/z）；若旋转后与邻居冲突则回退
+// 旋转当前选中箱子的朝向（交换 L/W，保留位置 x/y/z）；原位放不下则在本柜内另找位置。
+// 注意：绝不做「清空整柜再重建」——旧实现那样做，一旦中途失败就会留下半重建的柜，
+// 且之后又调 doCalc() 全量重算，把用户的手工调整整个丢掉。这里失败即「什么都不改」。
 function rotateSelected() {
   if (!result) return;
   const c = result.containers[activeContainer];
@@ -998,69 +1105,60 @@ function rotateSelected() {
   if (!b) return;
   const newL = b.W, newW = b.L;
   const spec = result.spec;
-  // 越界检测
-  if (b.x + newL > spec.l + 0.01 || b.y + newW > spec.w + 0.01 || b.z + b.H > spec.h + 0.01) {
-    alert('旋转后会超出柜壁，无法完成'); return;
+  if (newL === b.L && newW === b.W) return;   // L===W 的方块，旋转无意义
+  const vol0 = b.L * b.W * b.H;
+  // 原位旋转是否越界 / 与邻居重叠
+  const fitsHere = (b.x + newL <= spec.l + 0.01 && b.y + newW <= spec.w + 0.01 && b.z + b.H <= spec.h + 0.01)
+    && !c.items.some((o, i) => i !== selectedBoxIdx &&
+        b.x < o.x + o.L && b.x + newL > o.x &&
+        b.y < o.y + o.W && b.y + newW > o.y &&
+        b.z < o.z + o.H && b.z + b.H > o.z);
+  if (fitsHere) {
+    b.L = newL; b.W = newW;
+  } else {
+    if (!confirm('旋转后在原位置会越界或与相邻货物重叠。\n是否尝试在本柜内另找位置放置？')) return;
+    const cand = { L: newL, W: newW, H: b.H };
+    const pl = findPlacementIn(cand, c, selectedBoxIdx, [[newL, newW, b.H]]);
+    if (!pl) { alert('本柜已无合适位置，旋转未生效'); return; }
+    b.x = pl.x; b.y = pl.y; b.z = pl.z; b.L = newL; b.W = newW;
   }
-  // 重叠检测
-  const cand = { x: b.x, y: b.y, z: b.z, L: newL, W: newW, H: b.H };
-  let conflict = false;
-  for (let i = 0; i < c.items.length; i++) {
-    if (i === selectedBoxIdx) continue;
-    const o = c.items[i];
-    if (cand.x < o.x+o.L && cand.x+cand.L > o.x && cand.y < o.y+o.W && cand.y+cand.W > o.y
-        && cand.z < o.z+o.H && cand.z+cand.H > o.z) { conflict = true; break; }
-  }
-  if (conflict) {
-    if (!confirm('旋转后会与邻居重叠，是否仍要尝试（会在该位置强行移除并重新放置，可能换柜）？')) return;
-    // 把旧箱标记删除，让算法重排 - 简化：直接 swap 然后所有后续也受影响。不安全，改成 remove + 重新pack
-    c.items.splice(selectedBoxIdx, 1);
-    // 重新计算全部：用贪心找一个放置 (排除 b)
-    const rebuilt = rebuildContainer(activeContainer);
-    if (!rebuilt) { // 失败则恢复原样
-      c.items.splice(selectedBoxIdx, 0, b);
-      alert('重排失败，已恢复原状'); return;
-    }
-    doCalc(); // 简化触发整盘重算（用户体验层面安全）
-    return;
-  }
-  b.L = newL; b.W = newW;
+  c.usedVol += b.L * b.W * b.H - vol0;          // 同步体积统计（长宽互换后底面积不变时会自动抵消）
+  c.loadRate = c.usedVol / c.interiorVol;
   render3D(activeContainer);
   renderDetail();
+  renderSummary();
   showPickMenuAt(document.getElementById('canvas3d'), b);
 }
 
-// 在 3D 中重新分配某箱；返回新坐标 {x,y,z,l,w,h,container,idx}
-function rebuildContainer(ci) {
-  // 极简：把所有箱按贪心重新放进 ci。 真正实现可拓展到多柜。
-  const c = result.containers[ci];
-  const items = c.items.slice();
-  c.items = []; c.usedVol = 0; c.usedWeight = 0;
-  for (const it of items) {
-    const pl = findPlacementIn(it, c);
-    if (!pl) return false;
-    applyItemTo(it, pl, c);
+// 在指定柜内为 it 找一个「不越界、不与其它货物重叠」的合法位置。
+// 候选点 = 原点 + 每个已有货物的三个外表面延伸点（极端点法），
+// 比旧实现按 50mm 三重步进暴力扫描（≈6×10⁸ 次起步）快几个量级，而且旧实现漏了越界校验。
+// excludeIdx：忽略自身（旋转场景下该箱仍在 c.items 里）。
+function findPlacementIn(it, c, excludeIdx, ors) {
+  const spec = result.spec;
+  const others = c.items.filter((_, i) => i !== excludeIdx);
+  const cands = [{ x: 0, y: 0, z: 0 }];
+  for (const o of others) {
+    cands.push({ x: o.x + o.L, y: o.y, z: o.z });
+    cands.push({ x: o.x, y: o.y + o.W, z: o.z });
+    cands.push({ x: o.x, y: o.y, z: o.z + o.H });
   }
-  return true;
-}
-function findPlacementIn(it, c) {
-  // 贪心：找第一个不重叠的放置点
-  for (let z = 0; z < result.spec.h; z += 50) {
-    for (let y = 0; y < result.spec.w; y += 50) {
-      for (let x = 0; x < result.spec.l; x += 50) {
-        let ok = true;
-        for (const o of c.items) {
-          if (x < o.x+o.L && x+it.L > o.x && y < o.y+o.W && y+it.W > o.y && z < o.z+o.H && z+it.H > o.z) { ok = false; break; }
-        }
-        if (ok) return { x, y, z };
+  cands.sort((a, b) => a.z - b.z || a.x - b.x || a.y - b.y);   // 自底向上优先
+  const list = ors || [[it.L, it.W, it.H]];
+  for (const p of cands) {
+    if (p.x < -1e-9 || p.y < -1e-9 || p.z < -1e-9) continue;
+    for (const o of list) {
+      const L = o[0], W = o[1], H = o[2];
+      if (p.x + L > spec.l + 1e-6 || p.y + W > spec.w + 1e-6 || p.z + H > spec.h + 1e-6) continue;  // 越界校验
+      let ok = true;
+      for (const o2 of others) {
+        if (p.x < o2.x + o2.L && p.x + L > o2.x && p.y < o2.y + o2.W && p.y + W > o2.y
+            && p.z < o2.z + o2.H && p.z + H > o2.z) { ok = false; break; }
       }
+      if (ok) return { x: p.x, y: p.y, z: p.z, L, W, H };
     }
   }
   return null;
-}
-function applyItemTo(it, pl, c) {
-  const b = { ...it, x: pl.x, y: pl.y, z: pl.z, L: it.L, W: it.W, H: it.H };
-  c.items.push(b); c.usedVol += b.L*b.W*b.H; c.usedWeight += b.weight;
 }
 
 function deleteSelected() {
@@ -1095,10 +1193,10 @@ function showPickMenuAt(canvas, b) {
       })()
     : '';
   pop.innerHTML = `
-    <b>${b.name}</b><br>
+    <b>${escapeHtml(b.name)}</b><br>
     尺寸 ${b.L}×${b.W}×${b.H}mm · ${b.isPallet?'托盘':'纸箱'}<br>
     坐标 (${b.x.toFixed(0)},${b.y.toFixed(0)},${b.z.toFixed(0)})<br>
-    数量 ${b.count} · 分组 ${b.group||'-'}
+    数量 ${b.count} · 分组 ${escapeHtml(b.group||'-')}
     ${palletPlan}
     <div class="pop-btns mt-2">
       <button id="popRotate" title="交换该箱的长/宽，90°旋转">🔄 旋转90°</button>
@@ -1137,8 +1235,12 @@ function initThree() {
   scene.add(new THREE.AmbientLight(0xffffff, 0.85));
   const dir = new THREE.DirectionalLight(0xffffff, 0.6); dir.position.set(1,1.5,1); scene.add(dir);
   // 持续渲染循环：让 OrbitControls 阻尼与拖拽实时刷新画面
-  renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
-  window.addEventListener('resize', () => { if(renderer){ const cv=renderer.domElement; const w=cv.clientWidth||800, h=cv.clientHeight||440; renderer.setSize(w, h, false); camera.aspect=w/h; camera.updateProjectionMatrix(); }});
+  // 按需渲染：OrbitControls.update() 在相机真的发生变化时返回 true（含阻尼的收尾帧），
+  // 只有此时（或显式标脏）才真正 draw —— 静止时彻底不占 GPU/CPU，不再 60fps 空转。
+  renderer.setAnimationLoop(() => {
+    if (controls.update() || _sceneDirty) { renderer.render(scene, camera); _sceneDirty = false; }
+  });
+  window.addEventListener('resize', () => { if(renderer){ const cv=renderer.domElement; const w=cv.clientWidth||800, h=cv.clientHeight||440; renderer.setSize(w, h, false); camera.aspect=w/h; camera.updateProjectionMatrix(); _sceneDirty = true; }});
 }
 function render3D(ci, selColor=0xfbbf24) {
   if (!renderer) initThree();
@@ -1146,7 +1248,7 @@ function render3D(ci, selColor=0xfbbf24) {
   const w = canvas.clientWidth || 800, h = canvas.clientHeight || 440;
   renderer.setSize(w, h, false);
   camera.aspect = w/h; camera.updateProjectionMatrix();
-  while (scene.children.length > 2) scene.remove(scene.children[scene.children.length-1]);
+  clearSceneObjects();
   const c = result.containers[ci]; const b = result.spec;
   // 集装箱线框 (three: x=长, y=高, z=宽)
   const cBox = new THREE.BoxGeometry(b.l, b.h, b.w);
@@ -1272,7 +1374,10 @@ function importExcel(file) {
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, {header:1});
     if (rows.length < 2) return;
-    const h = rows[0]; const idx = k => h.indexOf(k);
+    const h = rows[0];
+    // 表头取列：支持别名（导出模板用的是「托盘重」，早期版本曾写成「托盘重量」；两者都认，
+    // 否则 indexOf 返回 -1 → 该列恒被读成 0，导出的模板再导回来就丢字段）。
+    const idx = (...keys) => { for (const k of keys) { const i = h.indexOf(k); if (i >= 0) return i; } return -1; };
     const ng = [];
     for (let r=1; r<rows.length; r++) {
       const row = rows[r];
@@ -1283,7 +1388,7 @@ function importExcel(file) {
       g.weight = num(row[idx('单重')]); g.qty = num(row[idx('数量')]);
       const pt = row[idx('是否托盘')];       g.isPallet = (pt===true || (''+pt).includes('是'));
       g.palletL = num(row[idx('托盘长')]); g.palletW = num(row[idx('托盘宽')]);
-      g.perPallet = num(row[idx('每托数量')]); g.palletWeight = num(row[idx('托盘重量')]); g.palletH = num(row[idx('托盘高')]);
+      g.perPallet = num(row[idx('每托数量')]); g.palletWeight = num(row[idx('托盘重','托盘重量')]); g.palletH = num(row[idx('托盘高')]);
       g.perPalletManual = true;   // Excel 里显式给了每托数量，视为用户手改，不自动跟随
       const ar = row[idx('允许旋转')]; g.allowRotate = !(ar===false || (''+ar).includes('否'));
       const ai = row[idx('允许倒置')]; g.allowInvert = !(ai===false || (''+ai).includes('否'));
@@ -1316,6 +1421,8 @@ function exportExcel() {
 /* ============ PDF 导出 ============ */
 function exportPDF() {
   if (!result) return;
+  if (resultStale) { alert('当前显示的是修改前的旧方案，请先重新点击「开始计算」。'); return; }
+  if (!window.jspdf) { alert('PDF 导出组件未加载（libs/jspdf.umd.min.js），无法导出。'); return; }
   // 关键：jsPDF 内置 Helvetica 不含中文字形，直接写中文会成方块。
   // 解决方案——用浏览器原生 CJK 字体把所有文字画到 canvas，再以图片形式放入 PDF（离线、无需嵌字体）。
   const SCALE = 6;                         // 像素/毫米，决定清晰度
@@ -1510,22 +1617,39 @@ function layerPackSearch(L, W, boxL, boxW, gx, gy) {
   // 先用快速启发式（单朝向网格 / 行式 / 田字）算出一个「下界布局」(含坐标) 作为 DFS 的初始 best：
   // ① 让「面积上界剪枝」一开始就生效，避免大数量（如 18 箱）时搜索爆炸卡死；
   // ② 保证即使 DFS 因剪枝未取得更优解，也能返回一份合法坐标（3D/俯视图/文案不会拿到空 coords）。
+  // 间隙合规的重叠判定：两箱在 x 或 y 方向投影必须留出 ≥ gx / gy 的空隙。
+  // 与 DFS 的 overlaps() 用同一套判定，保证 quickLayout 播种的下界不违反「箱间隙」约定。
+  // gx=gy=0 时退化为「相接即合法」，与旧行为完全一致。
   const noOverlap = (coords) => {
     for (let i=0;i<coords.length;i++) for (let j=i+1;j<coords.length;j++) {
       const a=coords[i], b=coords[j];
-      if (!(a.x+a.oL <= b.x+1e-6 || b.x+b.oL <= a.x+1e-6 || a.y+a.oW <= b.y+1e-6 || b.y+b.oW <= a.y+1e-6)) return false;
+      if (!(a.x+a.oL+gx <= b.x+1e-6 || b.x+b.oL+gx <= a.x+1e-6 ||
+            a.y+a.oW+gy <= b.y+1e-6 || b.y+b.oW+gy <= a.y+1e-6)) return false;
     }
     return true;
   };
   const quickLayout = () => {
     let bestN = 0, bestCoords = [];
-    const consider = (coords) => { if (coords.length > bestN && noOverlap(coords)) { bestN = coords.length; bestCoords = coords; } };
-    // 单朝向网格
+    const consider = (coords, trustNoOverlap) => {
+      if (coords.length <= bestN) return;                 // 先看数量，绝大多数候选在此被廉价丢弃
+      if (!(trustNoOverlap && gx >= 0 && gy >= 0) && !noOverlap(coords)) return;
+      bestN = coords.length; bestCoords = coords;
+    };
+    // 单朝向网格：步进 = 尺寸+间隙，构造即无重叠 → 跳过 O(n²) 校验。
+    // （不跳的话，12000 个箱的网格光校验就要 1.4 亿次比较，这正是小尺寸卡死的主因。）
     for (const [uL,uW] of orients) {
       const coords = [];
       for (let y=0; y+uW <= W+1e-6; y += uW+gy) for (let x=0; x+uL <= L+1e-6; x += uL+gx) coords.push({ x, y, oL:uL, oW:uW });
-      consider(coords);
+      consider(coords, true);
     }
+    // ==== 规模护栏 ====
+    // 下面的行式/田字/stair 构造都是「枚举 + 大量数组构造」，在「箱远小于容器」时组合爆炸：
+    //   实测 1200×1000 装 10×10 箱需 13.3s、装 5×5 箱 >100s（页面假死）。
+    // 触发入口极多（卡片打托预览 / 每托数量默认值 / 理论容量 / 点击箱子 / 计算前校验），
+    // 而 DFS 的 1.2s 硬上限拦不住在它之前跑的 quickLayout。
+    // 这些场景下网格解已接近面积上界，直接收口返回（后续 DFS 仍可尝试改进）。
+    const QUICK_MAX_N = 600;      // 单层网格箱数上限：超过则只用网格
+    if (bestN > QUICK_MAX_N) return { n: bestN, coords: bestCoords };
     // 行式交错（r1 行 A + r2 行 B，沿 W 方向逐行）
     const minBox = Math.min(boxL, boxW); const ROW_MAX = Math.max(1, Math.floor(W / minBox));
     for (let r1=0;r1<=ROW_MAX;r1++) for (let r2=0;r2<=ROW_MAX-r1;r2++)
@@ -1540,6 +1664,7 @@ function layerPackSearch(L, W, boxL, boxW, gx, gy) {
     for (const [aL,aW] of orients) for (const [bL,bW] of orients) {
       if (aL+bL > L+1e-6 || aW+bW > W+1e-6) continue;
       const bl=aL+bL, bw=aW+bW, bL2=Math.max(1,Math.floor(L/bl)), bW2=Math.max(1,Math.floor(W/bw));
+      if (bL2*bW2*4 > QUICK_MAX_N*2) continue;   // 规模护栏：块数过多时收益为 0，纯浪费
       const coords = [];
       for (let bx=0;bx<bL2;bx++) for (let by=0;by<bW2;by++){ const ox=bx*bl, oy=by*bw;
         coords.push({ x:ox, y:oy, oL:aL, oW:aW });
@@ -1559,6 +1684,9 @@ function layerPackSearch(L, W, boxL, boxW, gx, gy) {
       const res = [];
       if (!(sa > 0 && sb > 0) || 2 * sb > W + 1e-6) return res;     // 需放得下两条 A 横带(高各 b)
       const nBotMax = Math.floor(L / sa);
+      // 规模护栏：候选数组数 ≈ nBotMax² × 常数，小箱时 nBotMax 很大、而候选箱数远不及网格解，
+      // 纯属浪费（数组构造本身就有成本）。超过上限直接跳过，结果只会持平或略低，不会更差。
+      if (nBotMax > 64) return res;
       for (let nBot = 1; nBot <= nBotMax; nBot++) {
         const xBotEnd = nBot * sa;
         for (const hasTail of [false, true]) {                       // 下带尾部是否竖 B(宽 b、高 a)
@@ -1603,6 +1731,9 @@ function layerPackSearch(L, W, boxL, boxW, gx, gy) {
     return { n: bestN, coords: bestCoords };
   };
   let best = quickLayout();
+  // 下界若已触及「面积上界」，数学上不可能更优 —— 直接返回，省掉整段 DFS。
+  // 对小箱场景（如 1200×1000 装 10×10）尤其明显：网格正好铺满，DFS 原本纯属空转。
+  if (best.n >= Math.floor((L * W) / boxArea)) return best;
   const LB = best.n;  // quickLayout 给的下界：DFS 若突破不了它，这次搜索就是纯空转
   const visited = new Set();
   let nodes = 0; const NODE_CAP = 4000000, VISIT_CAP = 300000;
@@ -1620,7 +1751,17 @@ function layerPackSearch(L, W, boxL, boxW, gx, gy) {
     const now = nowMs();
     return (now - T0) > 1200 || (now - lastGain) > STALL_MS;
   };
-  const sig = () => placed.map(p => p.x.toFixed(1)+','+p.y.toFixed(1)+','+p.oL+','+p.oW).sort().join('|');
+  // visited 去重键。placed 已被上面的「规范序」约束保证按 (y,x) 单调递增排列，
+  // 所以同一组箱子的到达顺序是唯一的 —— 原来的 .sort() 是冗余的，白白做了 O(n log n) 次字符串比较。
+  // 去掉 sort 只会「少去重、多搜一点」，绝不会漏解（best 全程记录），方向安全。
+  const sig = () => {
+    let s = '';
+    for (let i = 0, n = placed.length; i < n; i++) {
+      const p = placed[i];
+      s += p.x.toFixed(1) + ',' + p.y.toFixed(1) + ',' + p.oL + ',' + p.oW + ';';
+    }
+    return s;
+  };
   const overlaps = (x, y, oL, oW) => {
     if (x < -1e-9 || y < -1e-9) return true;
     if (x + oL > L + 1e-6 || y + oW > W + 1e-6) return true;
@@ -1674,14 +1815,33 @@ function layerPackSearch(L, W, boxL, boxW, gx, gy) {
   return best;
 }
 
+/* ---- 单层布局结果记忆化 ----
+   palletLevelLayout 是全局热点：卡片打托预览、每托数量默认值、理论容量、点击箱子看详情、
+   计算前校验都会各调一次，单次最坏 1.2s（DFS 硬上限）。
+   缓存键按「底面规范化 + 箱底面规范化」生成 —— layerPackSearch 内部本就同时枚举箱的两个朝向，
+   所以 (bl,bw) 与 (bw,bl) 是同一个问题、结果必然相同，合并后可省掉近一半搜索。
+   ⚠️ 柜体 L/W 不能互相规范化：那会交换坐标系的 x/y 轴，n 虽相同但坐标帧不对。
+   ⚠️ 返回的 coords 是共享只读数组，调用方不得就地修改（现有调用方均为 map/遍历读取）。 */
+const _pallLayoutCache = new Map();
+const PALL_CACHE_MAX = 2000;
 function palletLevelLayout(palletL, palletW, boxL, boxW, gx, gy) {
   palletL = +palletL; palletW = +palletW;
   boxL = +boxL; boxW = +boxW;
   if (!(palletL > 0 && palletW > 0 && boxL > 0 && boxW > 0)) return null;
   if (Math.min(boxL, boxW) <= 0) return null;  // 防御：箱某边为0时不搜索，避免除零/死循环
-  const res = layerPackSearch(palletL, palletW, boxL, boxW, gx||0, gy||0);
-  if (!res || res.n <= 0) return null;
-  return { n: res.n, coords: res.coords, oA: [boxL, boxW], oB: [boxW, boxL], pattern: 'search2d' };
+  gx = +(gx || 0); gy = +(gy || 0);
+  const bl = Math.min(boxL, boxW), bw = Math.max(boxL, boxW);
+  const key = palletL + 'x' + palletW + '|' + bl + 'x' + bw + '|' + gx + ',' + gy;
+  let hit = _pallLayoutCache.get(key);
+  if (!hit) {
+    const res = layerPackSearch(palletL, palletW, boxL, boxW, gx, gy);
+    hit = (res && res.n > 0) ? { n: res.n, coords: res.coords } : null;
+    if (_pallLayoutCache.size >= PALL_CACHE_MAX) _pallLayoutCache.clear();  // 简单上限，防无限增长
+    _pallLayoutCache.set(key, hit);
+  }
+  if (!hit) return null;
+  // 朝向标签按「本次调用传入的」boxL/boxW 给出，保证调用方看到的 A/B 与自己的输入一致
+  return { n: hit.n, coords: hit.coords, oA: [boxL, boxW], oB: [boxW, boxL], pattern: 'search2d' };
 }
 
 // 把 palletLevelLayout 结果画成 SVG 俯视图（默认 240×240，可指定 px）
@@ -1747,7 +1907,7 @@ function updateTheory() {
     const cx=Math.floor(pl/bl), cy=Math.floor(pw/bw), single=Math.max(1,cx*cy);
     const brickN=cap.perLayer0;  // 交错码盘每层箱数（theoryCapacity 已用其算高度）
     el.innerHTML='≈ '+cap.total+' 托（'+cap.perLayer+'托/柜层 × '+cap.layers+'柜层，约 '+cap.boxEquiv+' 箱）<br>'+
-      '<span class="text-slate-500">【'+g.name+'】每托'+per+'箱 ÷ 每层'+brickN+'箱(交错码盘，单朝向仅'+single+'箱) = '+cap.boxLayers+'层箱 → 整托高 = '+pH+'+'+cap.boxLayers+'×'+bh+' = '+Math.round(cap.palletHmm)+'mm</span>';
+      '<span class="text-slate-500">【'+escapeHtml(g.name)+'】每托'+per+'箱 ÷ 每层'+brickN+'箱(交错码盘，单朝向仅'+single+'箱) = '+cap.boxLayers+'层箱 → 整托高 = '+pH+'+'+cap.boxLayers+'×'+bh+' = '+Math.round(cap.palletHmm)+'mm</span>';
   }
   else el.textContent='≈ '+cap.total+' 箱（'+cap.perLayer+'箱/层 × '+cap.layers+'层）';
 }
@@ -1772,13 +1932,26 @@ document.getElementById('ctype').addEventListener('change', e => {
     document.getElementById('ch').value=p.h;     document.getElementById('cm').value=p.maxLoad; }
   updateTheoryDebounced();
   scheduleAutoPerPallet(syncAllAutoPerPallet);   // 换柜型→柜高变→未手改的每托数量自动跟随
+  invalidateResult();
 });
-['cl','cw','ch','cgap'].forEach(id => document.getElementById(id).addEventListener('input', () => {
+['cl','cw','ch','cgap','cm'].forEach(id => document.getElementById(id).addEventListener('input', () => {
   updateTheoryDebounced();
   if (id === 'ch') scheduleAutoPerPallet(syncAllAutoPerPallet);  // 只有柜高影响「每托数量」
+  invalidateResult();
 }));
-document.getElementById('btnAdd').onclick = () => { goods.push(defaultGood()); renderGoods(); updateTheory(); };
-document.getElementById('btnClear').onclick = () => { goods = []; renderGoods(); updateTheory(); };
+document.getElementById('packOrder').addEventListener('change', invalidateResult);
+document.getElementById('btnAdd').onclick = () => { goods.push(defaultGood()); renderGoods(); updateTheory(); invalidateResult(); };
+document.getElementById('btnClear').onclick = () => {
+  goods = []; renderGoods(); updateTheory();
+  // 清空货物后旧方案完全失效：连结果一起清掉，而不是留着一张可导出的过期表
+  result = null; resultStale = false; activeContainer = 0; selectedBoxIdx = -1;
+  document.getElementById('pickInfo').classList.add('hidden');
+  document.getElementById('btnXls').disabled = true;
+  document.getElementById('btnPdf').disabled = true;
+  document.getElementById('calcState').textContent = '';
+  ['threeArea','summaryArea','detailArea'].forEach(id => document.getElementById(id).classList.add('hidden'));
+  const eh = document.getElementById('emptyHint'); if (eh) eh.classList.remove('hidden');
+};
 document.getElementById('btnTpl').onclick = downloadTemplate;
 document.getElementById('fileIn').addEventListener('change', e => { if (e.target.files[0]) importExcel(e.target.files[0]); e.target.value=''; });
 document.getElementById('btnCalc').onclick = doCalc;
@@ -1787,6 +1960,7 @@ document.getElementById('btnPdf').onclick = exportPDF;
 
 renderGoods();
 updateTheory();
+window.__zgmReady = true;   // 供页面顶部的启动自检判断「模块是否真的跑起来了」
 </script>
 </body>
 </html>

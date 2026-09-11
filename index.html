@@ -143,13 +143,22 @@
 </div>
 <script>
 (function () {
-  setTimeout(function () {
-    if (window.__zgmReady) return;
+  function show() {
     var el = document.getElementById('bootError');
     if (el) el.classList.remove('hidden');
     var cs = document.getElementById('calcState');
     if (cs) cs.textContent = '资源加载失败';
-  }, 5000);
+  }
+  // ① 模块脚本加载失败时，浏览器会在 window 上冒泡一个指向该 <script> 的 error 事件（捕获阶段监听）
+  window.addEventListener('error', function (e) {
+    var t = e.target;
+    if (t && t.tagName === 'SCRIPT') show();
+  }, true);
+  // ② 兜底：页面 load 之后再等 8s 仍未就绪才提示。
+  //    不用固定短超时——本地依赖合计约 2.5MB，慢网络下正常加载也可能超过 5~10s，会误报。
+  window.addEventListener('load', function () {
+    setTimeout(function () { if (!window.__zgmReady) show(); }, 8000);
+  });
 })();
 </script>
 

@@ -3,14 +3,44 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>集装箱装柜计算工具</title>
+<title>集装箱装柜计算工具_装柜大师 - 在线3D装柜模拟与柜型容量计算</title>
+<meta name="description" content="免费在线集装箱装柜计算工具：支持20GP/40GP/40HQ/45HQ柜型，输入纸箱尺寸即可自动算出理论装载量、装载率与托盘码盘方案，并生成3D装柜预览，支持Excel批量导入与方案导出。无需安装、无需注册，数据只在本地计算。" />
+<meta name="keywords" content="装柜计算,集装箱装柜计算工具,装柜大师,柜型容量计算,20GP,40GP,40HQ,45HQ,托盘码盘,托盘堆码计算,装箱软件,3D装柜模拟,集装箱内尺寸,装载率计算,装柜方案" />
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+<meta name="author" content="装柜大师" />
+<meta name="application-name" content="装柜大师" />
+<meta name="theme-color" content="#2563eb" />
+<link rel="canonical" href="https://bbb-pro.github.io/loader-master/" />
+
+<!-- Open Graph：微信 / 微博 / Facebook 等分享卡片 -->
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="装柜大师" />
+<meta property="og:locale" content="zh_CN" />
+<meta property="og:title" content="集装箱装柜计算工具_装柜大师 - 在线3D装柜模拟与柜型容量计算" />
+<meta property="og:description" content="输入纸箱尺寸即可算出20GP/40GP/40HQ/45HQ的理论装载量与托盘码盘方案，并生成3D装柜预览，支持Excel导入导出。" />
+<meta property="og:url" content="https://bbb-pro.github.io/loader-master/" />
+<meta property="og:image" content="https://bbb-pro.github.io/loader-master/og-cover.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="装柜大师 - 集装箱装柜计算工具，左侧参数设置、中间3D装柜预览" />
+
+<!-- Twitter / X 卡片 -->
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="集装箱装柜计算工具_装柜大师" />
+<meta name="twitter:description" content="在线3D装柜模拟：自动计算柜型容量与托盘码盘方案，支持Excel导入导出。" />
+<meta name="twitter:image" content="https://bbb-pro.github.io/loader-master/og-cover.png" />
+
+<link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="./icon-512.png" />
 <!-- 依赖全部本地化（libs/ 目录），离线可用、无 CDN 单点故障。
      tailwind.css 是用 Tailwind CLI 针对本文件扫描生成的静态产物（按需裁剪），
      取代原先的 cdn.tailwindcss.com（浏览器端 JIT 编译）。改样式后需重新构建：
        npx tailwindcss -i input.css -o libs/tailwind.css --minify   （content 指向本文件） -->
 <link rel="stylesheet" href="./libs/tailwind.css">
-<script src="./libs/xlsx.full.min.js"></script>
-<script src="./libs/jspdf.umd.min.js"></script>
+<!-- defer：xlsx(881KB)/jspdf(364KB) 只在点击「导入模板 / 导出」时才会用到，
+     放在头部同步加载会阻塞 HTML 解析与首屏渲染（拖低 LCP）。加 defer 后可并行下载、不挡解析。 -->
+<script defer src="./libs/xlsx.full.min.js"></script>
+<script defer src="./libs/jspdf.umd.min.js"></script>
 <script type="importmap">
 { "imports": {
   "three": "./libs/three/three.module.js",
@@ -35,10 +65,94 @@
   /* 托盘字段仅在勾选「托盘」后显示 */
   .good-card:not(.pallet-on) .pallet-field { display:none; }
 </style>
+
+<!-- 结构化数据：让搜索引擎识别这是一个可用的在线工具 + FAQ 富媒体结果 -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebApplication",
+      "@id": "https://bbb-pro.github.io/loader-master/#webapp",
+      "name": "装柜大师 - 集装箱装柜计算工具",
+      "alternateName": "集装箱装柜计算工具",
+      "url": "https://bbb-pro.github.io/loader-master/",
+      "applicationCategory": "BusinessApplication",
+      "applicationSubCategory": "集装箱装柜计算",
+      "operatingSystem": "Web",
+      "browserRequirements": "需要支持 WebGL 的现代浏览器",
+      "inLanguage": "zh-CN",
+      "isAccessibleForFree": true,
+      "description": "免费的在线集装箱装柜计算工具，支持 20GP、40GP、40HQ、45HQ 及自定义柜型，自动计算纸箱装载量与托盘码盘方案，并提供 3D 装柜预览与 Excel、PDF 导出。",
+      "featureList": [
+        "20GP / 40GP / 40HQ / 45HQ 及自定义柜型容量计算",
+        "纸箱散装多朝向二维回溯搜索排布",
+        "托盘码盘与每托层数、整托高度计算",
+        "3D 装柜预览与单箱信息查看",
+        "Excel 批量导入与装柜方案导出",
+        "装载率与最大承重校验"
+      ],
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "CNY"
+      },
+      "screenshot": "https://bbb-pro.github.io/loader-master/og-cover.png"
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://bbb-pro.github.io/loader-master/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "装柜计算的结果是精确值吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "不是。结果是理论最大值。实际装柜还会受货物承压能力、不规则外形、加固与缓冲材料、柜门尺寸和人工摆放方式影响。建议按计算结果预留 3%~5% 的余量，重货还需单独核对重量上限。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "为什么算出来的箱数比「柜内容积 ÷ 单箱体积」少？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "因为纸箱是刚体，靠墙和拐角一定会留下无法利用的空隙。本工具用二维回溯搜索在柜底平面上求解实际能摆下的箱数，再乘以可堆层数，因此比单纯的体积相除更接近真实装柜。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "支持托盘装柜计算吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "支持。勾选「托盘」后填写托盘长宽、托盘高与每托箱数，工具会以托盘为单位逐层码放，并给出每托层数、整托高度以及整柜可装托盘数，3D 预览中木色底座即为托盘。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "货物数据会上传到服务器吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "不会。所有计算都在浏览器本地完成，货物与柜型数据不会上传到任何服务器，关闭或刷新页面后即清除。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "需要安装或注册吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "不需要。打开网页即可使用，也不用登录。页面依赖文件随站点一起加载，断网状态下同样可以完成计算。"
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
 </head>
 <body class="bg-slate-50 text-slate-800">
-<div class="max-w-[1700px] mx-auto p-4">
-  <h1 class="text-2xl font-bold mb-4">集装箱装柜计算工具</h1>
+<main class="max-w-[1700px] mx-auto p-4">
+  <h1 class="text-2xl font-bold mb-1">集装箱装柜计算工具<span class="text-slate-400 font-normal text-lg">（装柜大师）</span></h1>
+  <p class="text-sm text-slate-500 mb-4">在线 3D 装柜模拟 · 支持 20GP / 40GP / 40HQ / 45HQ 柜型 · 纸箱散装与托盘码盘 · 免安装、数据只在本地浏览器计算</p>
   <div class="flex flex-col lg:flex-row gap-4 items-start">
     <!-- 左：设置（集装箱配置 + 货物录入） -->
     <div id="leftCol" class="w-full lg:w-[360px] lg:shrink-0 lg:self-start lg:max-h-[calc(100vh-1.5rem)] lg:overflow-y-auto space-y-4 lg:pr-1">
@@ -130,7 +244,123 @@
       </section>
     </div>
   </div>
-</div>
+</main>
+
+<!-- ============ 工具下方的说明内容 ============
+     作用有两个：① 给首次访问的用户解释怎么用、结果可信度如何；
+     ② 给搜索引擎提供可抓取的正文文本（页面主体是 JS 渲染的，静态文本才有排名价值）。
+     注意：这些内容必须是真实可见的正文，不做任何隐藏处理，否则会被判定为作弊。 -->
+<section class="max-w-[1700px] mx-auto px-4 pb-2">
+  <div class="bg-white rounded-xl shadow p-5 mb-4">
+    <h2 class="text-lg font-bold mb-3">关于集装箱装柜计算工具</h2>
+    <p class="text-sm text-slate-600 mb-3">
+      「装柜大师」是一款免费的在线集装箱装柜计算工具，用于在出货前快速估算一个柜子到底能装多少货。
+      只需填写纸箱的长、宽、高和数量，选择柜型（20GP、40GP、40HQ、45HQ，或直接自定义内尺寸）与箱间隙，
+      工具就会自动算出理论最大装载量、占用体积、装载率，并给出每一层的实际摆放方案。
+    </p>
+    <p class="text-sm text-slate-600 mb-3">
+      和常见的「体积相除」估算不同，本工具使用的是二维回溯搜索（2D bin packing）排布算法：
+      会同时比较纸箱的正放与倒置两种朝向，在柜底平面上求解单层能摆下的最大箱数，
+      再结合柜内高度与托盘高度推算整柜层数，因此结果比简单估算更接近真实现场。
+      若货物打托出运，勾选「托盘」并填写托盘尺寸与每托箱数即可切换为托盘码盘模式，工具会按交错码盘计算每托层数与整托高度。
+    </p>
+    <p class="text-sm text-slate-600">
+      所有计算均在浏览器本地完成，货物数据不会上传到任何服务器，刷新页面即清除。页面依赖文件随站点一起加载，离线也可使用。
+    </p>
+  </div>
+
+  <div class="bg-white rounded-xl shadow p-5 mb-4">
+    <h2 class="text-lg font-bold mb-3">常用集装箱内尺寸与载重对照表</h2>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <caption class="sr-only">常用集装箱柜型内尺寸、内容积与最大载重对照表</caption>
+        <thead>
+          <tr class="bg-slate-100 text-left">
+            <th scope="col" class="border border-slate-200 px-3 py-2">柜型</th>
+            <th scope="col" class="border border-slate-200 px-3 py-2">内尺寸 长×宽×高 (mm)</th>
+            <th scope="col" class="border border-slate-200 px-3 py-2">内容积</th>
+            <th scope="col" class="border border-slate-200 px-3 py-2">最大载重</th>
+            <th scope="col" class="border border-slate-200 px-3 py-2">适用场景</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row" class="border border-slate-200 px-3 py-2 font-semibold text-left">20GP</th>
+            <td class="border border-slate-200 px-3 py-2">5940 × 2340 × 2390</td>
+            <td class="border border-slate-200 px-3 py-2">约 33.2 m³</td>
+            <td class="border border-slate-200 px-3 py-2">28,250 kg</td>
+            <td class="border border-slate-200 px-3 py-2">重货、小批量出货</td>
+          </tr>
+          <tr class="bg-slate-50">
+            <th scope="row" class="border border-slate-200 px-3 py-2 font-semibold text-left">40GP</th>
+            <td class="border border-slate-200 px-3 py-2">12060 × 2340 × 2390</td>
+            <td class="border border-slate-200 px-3 py-2">约 67.4 m³</td>
+            <td class="border border-slate-200 px-3 py-2">28,800 kg</td>
+            <td class="border border-slate-200 px-3 py-2">大批量、轻抛货</td>
+          </tr>
+          <tr>
+            <th scope="row" class="border border-slate-200 px-3 py-2 font-semibold text-left">40HQ</th>
+            <td class="border border-slate-200 px-3 py-2">12060 × 2340 × 2690</td>
+            <td class="border border-slate-200 px-3 py-2">约 75.9 m³</td>
+            <td class="border border-slate-200 px-3 py-2">30,200 kg</td>
+            <td class="border border-slate-200 px-3 py-2">高柜，泡货首选</td>
+          </tr>
+          <tr class="bg-slate-50">
+            <th scope="row" class="border border-slate-200 px-3 py-2 font-semibold text-left">45HQ</th>
+            <td class="border border-slate-200 px-3 py-2">13580 × 2350 × 2690</td>
+            <td class="border border-slate-200 px-3 py-2">约 85.8 m³</td>
+            <td class="border border-slate-200 px-3 py-2">27,000 kg</td>
+            <td class="border border-slate-200 px-3 py-2">超大批量、体积货</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="text-xs text-slate-400 mt-3">
+      以上为该工具内置的标准柜型预设值，不同船公司、不同箱况的实际内尺寸会有少量差异，批量出货前建议以订舱确认单为准。
+    </p>
+  </div>
+
+  <div class="bg-white rounded-xl shadow p-5 mb-4">
+    <h2 class="text-lg font-bold mb-3">四步完成一次装柜计算</h2>
+    <ol class="list-decimal list-inside text-sm text-slate-600 space-y-2">
+      <li><span class="font-semibold text-slate-700">选择柜型</span>　下拉选择 20GP / 40GP / 40HQ / 45HQ，或选「自定义」手动填写柜内长宽高与最大承重。</li>
+      <li><span class="font-semibold text-slate-700">录入货物</span>　填写纸箱长宽高、数量与单重；点「+ 添加」可录入多个 SKU，也可以用 Excel 模板批量导入。</li>
+      <li><span class="font-semibold text-slate-700">按需勾选托盘</span>　打托出运的货物勾选「托盘」，填写托盘长宽、托盘高与每托箱数，工具会自动按交错码盘排布。</li>
+      <li><span class="font-semibold text-slate-700">计算并导出</span>　点「开始计算」查看整柜数量、装载率与货物明细，中间区域是 3D 装柜预览，方案可导出为 Excel 或 PDF。</li>
+    </ol>
+  </div>
+
+  <div class="bg-white rounded-xl shadow p-5">
+    <h2 class="text-lg font-bold mb-3">常见问题</h2>
+    <div class="space-y-4">
+      <div>
+        <h3 class="text-sm font-semibold text-slate-700 mb-1">装柜计算的结果是精确值吗？</h3>
+        <p class="text-sm text-slate-600">不是。结果是理论最大值。实际装柜还会受货物承压能力、不规则外形、加固与缓冲材料、柜门尺寸和人工摆放方式影响。建议按计算结果预留 3%~5% 的余量，重货还需单独核对重量上限。</p>
+      </div>
+      <div>
+        <h3 class="text-sm font-semibold text-slate-700 mb-1">为什么算出来的箱数比「柜内容积 ÷ 单箱体积」少？</h3>
+        <p class="text-sm text-slate-600">因为纸箱是刚体，靠墙和拐角一定会留下无法利用的空隙。本工具用二维回溯搜索在柜底平面上求解实际能摆下的箱数，再乘以可堆层数，因此比单纯的体积相除更接近真实装柜。</p>
+      </div>
+      <div>
+        <h3 class="text-sm font-semibold text-slate-700 mb-1">支持托盘装柜计算吗？</h3>
+        <p class="text-sm text-slate-600">支持。勾选「托盘」后填写托盘长宽、托盘高与每托箱数，工具会以托盘为单位逐层码放，并给出每托层数、整托高度以及整柜可装托盘数，3D 预览中木色底座即为托盘。</p>
+      </div>
+      <div>
+        <h3 class="text-sm font-semibold text-slate-700 mb-1">货物数据会上传到服务器吗？</h3>
+        <p class="text-sm text-slate-600">不会。所有计算都在浏览器本地完成，货物与柜型数据不会上传到任何服务器，关闭或刷新页面后即清除。</p>
+      </div>
+      <div>
+        <h3 class="text-sm font-semibold text-slate-700 mb-1">需要安装或注册吗？</h3>
+        <p class="text-sm text-slate-600">不需要。打开网页即可使用，也不用登录。页面依赖文件随站点一起加载，断网状态下同样可以完成计算。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="max-w-[1700px] mx-auto px-4 pb-10 text-xs text-slate-400 leading-relaxed">
+  <p>装柜大师 · 集装箱装柜计算工具（在线 3D 装柜模拟 / 柜型容量计算 / 托盘码盘）</p>
+  <p>计算结果为理论估算，仅供出货预估与报价参考，实际装柜请以现场作业与订舱确认为准。</p>
+</footer>
 
 <!-- 启动自检：three.js 等模块脚本一旦加载失败，其内部代码完全不执行 → 页面白屏且无任何提示。
      这里用「就绪标记 + 超时」兜底报错。 -->
@@ -149,7 +379,7 @@
     var cs = document.getElementById('calcState');
     if (cs) cs.textContent = '资源加载失败';
   }
-  // ① 模块脚本加载失败时，浏览器会在 window 上冒泡一个指向该 <script> 的 error 事件（捕获阶段监听）
+  // ① 模块脚本加载失败时，浏览器会在 window 上冒泡一个指向该脚本标签的 error 事件（捕获阶段监听）
   window.addEventListener('error', function (e) {
     var t = e.target;
     if (t && t.tagName === 'SCRIPT') show();

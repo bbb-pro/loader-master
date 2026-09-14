@@ -64,6 +64,12 @@
   .good-card label { font-size:11px; color:#475569; }
   /* 托盘字段仅在勾选「托盘」后显示 */
   .good-card:not(.pallet-on) .pallet-field { display:none; }
+  /* 货物色块：与 3D 预览中该货物的配色同源（都取 skuColor(货物id)），用于对照识别。
+     白色描边让它在 slate-50 卡片底色上也能看清。 */
+  .good-swatch { display:inline-block; width:16px; height:16px; border-radius:4px; flex:0 0 auto;
+                 border:1px solid rgba(15,23,42,.25); box-shadow:0 0 0 2px #fff; }
+  .good-swatch--sm { width:10px; height:10px; border-radius:2px; border-color:rgba(120,120,120,.55);
+                     box-shadow:none; vertical-align:-1px; margin-right:4px; }
 </style>
 
 <!-- 结构化数据：让搜索引擎识别这是一个可用的在线工具 + FAQ 富媒体结果 -->
@@ -203,7 +209,7 @@
           </div>
         </div>
         <div id="goodsBody" class="space-y-3"></div>
-        <p class="text-xs text-slate-400 mt-2">单位：mm / kg。托盘模式下系统按「托盘长×宽」以纸箱原朝向固定行列摆放，每托数量决定层数；底部「托盘高」为木色托盘块（默认 150mm）。</p>
+        <p class="text-xs text-slate-400 mt-2">单位：mm / kg。托盘模式下系统按「托盘长×宽」以纸箱原朝向固定行列摆放，每托数量决定层数；底部「托盘高」为木色托盘块（默认 150mm）。<br><span class="text-slate-500">卡片左侧色块是该货物的专属颜色，与「3. 3D 预览」中的配色一一对应，可据此快速认出哪个货物是哪个。</span></p>
       </section>
 
       <!-- 操作 -->
@@ -493,6 +499,7 @@ function renderGoods() {
       `<label class="flex flex-col gap-0.5 ${cls}">${label}<input data-f="${f}" type="${type}" value="${escapeAttr(g[f] ?? '')}"></label>`;
     card.innerHTML = `
       <div class="flex items-center justify-between mb-2 gap-2">
+        <span class="good-swatch" style="background:${skuColor(g.id)}" title="此色块与 3D 预览中本货物的颜色一致"></span>
         <input data-f="name" class="font-semibold border rounded px-2 py-1 flex-1 min-w-0" value="${escapeAttr(g.name)}">
         <button data-act="del" class="text-rose-500 text-sm whitespace-nowrap flex-shrink-0">删除</button>
       </div>
@@ -1298,7 +1305,7 @@ function renderDetail() {
   let rows = c.items.map((b, idx) => {
     const spec = b.L+'×'+b.W+'×'+b.H+' · ('+b.x.toFixed(0)+','+b.y.toFixed(0)+','+b.z.toFixed(0)+')';
     const hl = (idx === selectedBoxIdx) ? ' bg-amber-100' : '';
-    return '<tr class="border-t border-slate-100 cursor-pointer hover:bg-slate-50'+hl+'" data-idx="'+idx+'"><td class="p-1 text-[11px] break-words" style="max-width:90px">'+escapeHtml(b.name)+'</td>'+
+    return '<tr class="border-t border-slate-100 cursor-pointer hover:bg-slate-50'+hl+'" data-idx="'+idx+'"><td class="p-1 text-[11px] break-words" style="max-width:90px"><span class="good-swatch good-swatch--sm" style="background:'+skuColor(b.colorKey)+'" title="与 3D 预览同色"></span>'+escapeHtml(b.name)+'</td>'+
       '<td class="p-1 text-[11px] whitespace-nowrap">'+spec+'</td>'+
       '<td class="p-1 text-[11px] whitespace-nowrap">'+b.count+'</td>'+
       '<td class="p-1 text-[11px] whitespace-nowrap">'+escapeHtml(b.group||'')+'</td>'+
@@ -1432,7 +1439,7 @@ function showPickMenuAt(canvas, b) {
       })()
     : '';
   pop.innerHTML = `
-    <b>${escapeHtml(b.name)}</b><br>
+    <b><span class="good-swatch good-swatch--sm" style="background:${skuColor(b.colorKey)}"></span>${escapeHtml(b.name)}</b><br>
     尺寸 ${b.L}×${b.W}×${b.H}mm · ${b.isPallet?'托盘':'纸箱'}<br>
     坐标 (${b.x.toFixed(0)},${b.y.toFixed(0)},${b.z.toFixed(0)})<br>
     数量 ${b.count} · 分组 ${escapeHtml(b.group||'-')}

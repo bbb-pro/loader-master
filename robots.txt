@@ -1,5 +1,5 @@
 User-agent: *
 Allow: /
 
-# 站点地图
-Sitemap: https://bbb-pro.github.io/loader-master/sitemap.xml
+# 站点地图（必须用自定义域名，旧域名 bbb-pro.github.io 会 301 到 http:// 造成二次跳转）
+Sitemap: https://057300.xyz/loader-master/sitemap.xml

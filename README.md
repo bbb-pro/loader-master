@@ -4,7 +4,7 @@
 
 装柜大师是一个纯前端的集装箱装载规划工具，无需后端、无需安装，双击 HTML 即可在任意现代浏览器运行。它适用于外贸、仓储、物流、拼柜等场景，帮助你在发货前快速得到一份可落地的装柜方案。
 
-- 🌐 在线使用：https://bbb-pro.github.io/loader-master/
+- 🌐 在线使用：https://057300.xyz/loader-master/
 - 📦 单文件交付：`装柜大师.html`（约 70 KB，内嵌 Three.js / SheetJS / jsPDF 全部依赖）
 
 ---
@@ -30,7 +30,7 @@
 ## 🚀 快速开始
 
 ### 方式一：在线使用（推荐）
-直接打开 **https://bbb-pro.github.io/loader-master/** 即可，无需下载。
+直接打开 **https://057300.xyz/loader-master/** 即可，无需下载。
 
 ### 方式二：本地使用
 1. 下载本仓库的 `装柜大师.html`（或克隆仓库后取该文件）。
@@ -146,7 +146,7 @@ loader-master/
 
 ## 🔗 相关链接
 
-- 在线演示：https://bbb-pro.github.io/loader-master/
+- 在线演示：https://057300.xyz/loader-master/
 - 仓库地址：https://github.com/bbb-pro/loader-master
 
 ---

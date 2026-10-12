@@ -154,6 +154,16 @@
   ]
 }
 </script>
+<!-- 百度统计（流量统计）：官方标准异步埋点，放在 </head> 前，不阻塞页面解析与首屏渲染 -->
+<script>
+var _hmt = _hmt || [];
+(function() {
+var hm = document.createElement("script");
+hm.src = "https://hm.baidu.com/hm.js?87c8e0d5bc10316e4785ef9f6300beeb";
+var s = document.getElementsByTagName("script")[0];
+s.parentNode.insertBefore(hm, s);
+})();
+</script>
 </head>
 <body class="bg-slate-50 text-slate-800">
 <main class="max-w-[1700px] mx-auto p-4">

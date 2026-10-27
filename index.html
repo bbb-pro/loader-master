@@ -1500,6 +1500,79 @@ function initThree() {
   });
   window.addEventListener('resize', () => { if(renderer){ const cv=renderer.domElement; const w=cv.clientWidth||800, h=cv.clientHeight||440; renderer.setSize(w, h, false); camera.aspect=w/h; camera.updateProjectionMatrix(); _sceneDirty = true; }});
 }
+/* ============ 托盘纸箱分隔线（3D 视觉增强） ============ */
+// 托盘模式下，3D 原本把整托货画成一个色块，看不出「一摞纸箱」和箱子长宽方向。
+// 这里复用 buildItems 里同一份 palletLevelLayout 的每层坐标（有缓存），逐箱描出顶面矩形与竖棱；
+// 顶面再沿纸箱长边画一条「封箱胶带」中线，长宽方向一眼可辨。
+// 所有线段合并进一个 BufferGeometry（每托仅 1 个 LineSegments），避免逐箱建 mesh 造成对象爆炸。
+function palletCartonLineSegments(it) {
+  const g = goods.find(x => x.id === it.colorKey);
+  if (!g || !g.isPallet) return null;
+  const pl = +g.palletL, pw = +g.palletW, bl = +g.l, bw = +g.w, bh = +g.h;
+  if (!(pl > 0 && pw > 0 && bl > 0 && bw > 0 && bh > 0)) return null;
+  const lay = palletLevelLayout(pl, pw, bl, bw);
+  if (!lay || !lay.n || !lay.coords || !lay.coords.length) return null;
+  const perLayer = lay.n;
+  const total = Math.max(1, (+it.count) || 1);
+  const layers = Math.max(1, Math.ceil(total / perLayer));
+  // packBrick 的 orientations 可能把托盘旋转 90°（L/W 互换）
+  const eps = 1e-6;
+  const rotated = Math.abs(it.L - pw) < eps && Math.abs(it.W - pl) < eps && Math.abs(pl - pw) > eps;
+
+  const x0 = it.x, z0 = it.y;
+  const yBase = it.z + (+it.palletH || 0);
+  const yTop = yBase + it.goodsH;
+  const pts = [];
+  const seg = (x1,y1,z1,x2,y2,z2) => pts.push(x1,y1,z1, x2,y2,z2);
+  // 极端箱数（>1200 箱/托）只画层框，避免线段数量失控
+  const dense = perLayer * layers <= 1200;
+
+  for (let k = 0; k < layers; k++) {
+    const yb = yBase + k * bh;
+    const yt = Math.min(yb + bh, yTop);
+    const nThis = Math.min(perLayer, total - k * perLayer);
+    if (nThis <= 0) break;
+    // 该层 4 条外框竖棱 → 侧面能看出层与层的分界
+    seg(x0, yb, z0,               x0, yt, z0);
+    seg(x0 + it.L, yb, z0,        x0 + it.L, yt, z0);
+    seg(x0, yb, z0 + it.W,        x0, yt, z0 + it.W);
+    seg(x0 + it.L, yb, z0 + it.W, x0 + it.L, yt, z0 + it.W);
+    if (!dense) continue;
+    for (let ci = 0; ci < nThis; ci++) {
+      const c = lay.coords[ci];
+      if (!c) break;
+      // 托盘局部 (x,y) → 柜内 (长,宽)；托盘旋转 90° 时两者互换
+      let bx, bz, cl, cw;
+      if (!rotated) { bx = x0 + c.x; bz = z0 + c.y; cl = c.oL; cw = c.oW; }
+      else          { bx = x0 + c.y; bz = z0 + c.x; cl = c.oW; cw = c.oL; }
+      // 顶面矩形
+      seg(bx, yt, bz,           bx + cl, yt, bz);
+      seg(bx + cl, yt, bz,      bx + cl, yt, bz + cw);
+      seg(bx + cl, yt, bz + cw, bx, yt, bz + cw);
+      seg(bx, yt, bz + cw,      bx, yt, bz);
+      // 4 条竖棱 → 同层相邻箱之间有竖缝，更像纸箱
+      seg(bx, yb, bz,           bx, yt, bz);
+      seg(bx + cl, yb, bz,      bx + cl, yt, bz);
+      seg(bx, yb, bz + cw,      bx, yt, bz + cw);
+      seg(bx + cl, yb, bz + cw, bx + cl, yt, bz + cw);
+    }
+  }
+
+  // 顶面「封箱胶带」：沿纸箱长边方向画一条中线（长边方向按第一个箱子的朝向判定）
+  const c0 = lay.coords[0];
+  const alongX = rotated ? (c0.oW >= c0.oL) : (c0.oL >= c0.oW);
+  const ty = yTop + 0.5;  // 轻微抬高，避免与顶面共面产生 z-fighting
+  if (alongX) seg(x0, ty, z0 + it.W / 2, x0 + it.L, ty, z0 + it.W / 2);
+  else        seg(x0 + it.L / 2, ty, z0, x0 + it.L / 2, ty, z0 + it.W);
+
+  if (!pts.length) return null;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+    color: 0x1e293b, transparent: true, opacity: 0.5,
+  }));
+}
+
 function render3D(ci, selColor=0xfbbf24) {
   if (!renderer) initThree();
   const canvas = renderer.domElement;
@@ -1537,6 +1610,12 @@ function render3D(ci, selColor=0xfbbf24) {
       gEdge.position.copy(gMesh.position);
       gEdge.userData = Object.assign({}, it, { boxIdx: idx, part: 'goodsEdge' });
       scene.add(gEdge);
+      // 叠加逐箱分隔线：整托货看起来是一摞纸箱，顶面胶带线标出长宽方向
+      const cartonLines = palletCartonLineSegments(it);
+      if (cartonLines) {
+        cartonLines.userData = Object.assign({}, it, { boxIdx: idx, part: 'cartonLines' });
+        scene.add(cartonLines);
+      }
     } else {
       const geo = new THREE.BoxGeometry(it.L, it.H, it.W);
       const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({color:skuColor(it.colorKey)}));

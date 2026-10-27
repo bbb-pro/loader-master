@@ -1487,9 +1487,22 @@ function initThree() {
   // 滚轮按钮(中键)拖拽 = 平移(pan)，与「Ctrl+左键」同效果，便于不按键盘时拖动视角。
   // OrbitControls 默认中键是 DOLLY(缩放)，但滚轮本身即可缩放，故把中键让给平移更顺手。
   controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
+  // ⚠️ 按需渲染的关键（滚轮缩放"有时没反应"的根因）：
+  // OrbitControls 的滚轮处理内部会自己调一次 update()，缩放量(scale)当帧就被消费掉、
+  // lastPosition 同步刷新 → 渲染循环里的 update() 第二帧返回 false → 不重绘。
+  // 拖拽旋转/平移因为有阻尼残余会连续返回 true 所以看起来正常，唯独滚轮是"一次到位"，最容易漏画。
+  // 因此必须监听 change 事件主动标脏，不能只依赖 update() 的返回值。
+  controls.addEventListener('change', () => { _sceneDirty = true; });
+  // 缩放距离上下限：太近会穿过货物内部/切进相机 near 平面，太远会超出 far 平面导致整柜消失
+  //（两种情况都会被误认为"滚轮失灵"）。容器对角线约 14m，这里给到 150m 足够看全景。
+  controls.minDistance = 50;
+  controls.maxDistance = 150000;
   raycaster = new THREE.Raycaster();
   // 屏蔽 canvas 右键菜单，避免与「右键平移」功能冲突
   canvas.addEventListener('contextmenu', e => e.preventDefault());
+  // 兜底：deltaY 为 0 的横向滚轮等情况下 OrbitControls 不会产生 change，这里直接标脏确保至少重绘一帧，
+  // 避免出现「滚动有动作但画面不动」的错觉。
+  canvas.addEventListener('wheel', () => { _sceneDirty = true; }, { passive: true });
   scene.add(new THREE.AmbientLight(0xffffff, 0.85));
   const dir = new THREE.DirectionalLight(0xffffff, 0.6); dir.position.set(1,1.5,1); scene.add(dir);
   // 持续渲染循环：让 OrbitControls 阻尼与拖拽实时刷新画面
@@ -1659,6 +1672,7 @@ function render3D(ci, selColor=0xfbbf24) {
   controls.target.copy(center);
   controls.update();
   renderer.render(scene, camera);
+  _sceneDirty = false;   // 已同步画完，清脏标记，避免渲染循环再重复画一帧同样的画面
 }
 // 统一「选中某个箱子」入口：高亮 3D + 明细行 + 弹出操作菜单（3D 点击与明细双击共用）
 function selectBox(idx) {

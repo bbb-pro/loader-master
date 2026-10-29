@@ -84,10 +84,15 @@
   "@graph": [
     {
       "@type": "Organization",
-      "@id": "https://057300.xyz/#organization",
-      "name": "包装&物流工具箱",
-      "alternateName": ["Packaging & Logistics Toolbox", "装柜大师"],
-      "url": "https://057300.xyz/",
+      "@id": "https://057300.xyz/loader-master/#organization",
+      "name": "装柜大师",
+      "alternateName": ["Loader Master", "集装箱装柜计算工具"],
+      "url": "https://057300.xyz/loader-master/",
+      "parentOrganization": {
+        "@type": "Organization",
+        "name": "包装&物流工具箱",
+        "url": "https://057300.xyz/"
+      },
       "logo": {
         "@type": "ImageObject",
         "url": "https://057300.xyz/loader-master/icon-512.png",
@@ -96,7 +101,13 @@
       },
       "founder": { "@type": "Person", "name": "星辰月光酿大树" },
       "sameAs": ["https://github.com/bbb-pro"],
-      "description": "面向包装设计、电商物流与外贸跟单场景的免费在线工具集，包含刀模设计、集装箱装柜计算、条码标签设计与 Markdown 编辑器，全部为纯前端实现，数据不出浏览器。"
+      "description": "免费的在线集装箱装柜计算工具，支持 20GP / 40GP / 40HQ / 45HQ 与自定义柜型，输出单层摆法、整柜装载量、装载率与 3D 装柜预览。",
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "contactType": "customer support",
+        "url": "https://057300.xyz/about/",
+        "availableLanguage": ["zh-CN", "en"]
+      }
     },
     {
       "@type": "WebSite",
@@ -105,7 +116,7 @@
       "name": "装柜大师 - 集装箱装柜计算工具",
       "alternateName": "Loader Master",
       "inLanguage": "zh-CN",
-      "publisher": { "@id": "https://057300.xyz/#organization" },
+      "publisher": { "@id": "https://057300.xyz/loader-master/#organization" },
       "isPartOf": { "@type": "WebSite", "name": "包装&物流工具箱", "url": "https://057300.xyz/" }
     },
     {
@@ -144,7 +155,7 @@
       },
       "screenshot": "https://057300.xyz/loader-master/og-cover.png",
       "author": { "@type": "Person", "name": "星辰月光酿大树" },
-      "publisher": { "@id": "https://057300.xyz/#organization" },
+      "publisher": { "@id": "https://057300.xyz/loader-master/#organization" },
       "isPartOf": { "@id": "https://057300.xyz/loader-master/#website" },
       "dateModified": "2026-10-29",
       "keywords": "装柜计算,集装箱装柜计算,装箱算法,托盘码盘,20GP,40GP,40HQ,45HQ,装载率",
@@ -342,13 +353,11 @@ s.parentNode.insertBefore(hm, s);
       </section>
     </div>
   </div>
-</main>
-
 <!-- ============ 工具下方的说明内容 ============
      作用有两个：① 给首次访问的用户解释怎么用、结果可信度如何；
      ② 给搜索引擎提供可抓取的正文文本（页面主体是 JS 渲染的，静态文本才有排名价值）。
      注意：这些内容必须是真实可见的正文，不做任何隐藏处理，否则会被判定为作弊。 -->
-<section class="max-w-[1700px] mx-auto px-4 pb-2">
+<section class="pb-2">
   <div class="bg-white rounded-xl shadow p-5 mb-4">
     <h2 class="text-lg font-bold mb-3">关于集装箱装柜计算工具</h2>
     <p class="text-sm text-slate-600 mb-3">
@@ -474,6 +483,7 @@ s.parentNode.insertBefore(hm, s);
     </p>
   </div>
 </section>
+</main>
 
 <footer class="max-w-[1700px] mx-auto px-4 pb-10 text-xs text-slate-400 leading-relaxed">
   <p>装柜大师 · 集装箱装柜计算工具（在线 3D 装柜模拟 / 柜型容量计算 / 托盘码盘）</p>

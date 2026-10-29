@@ -7,14 +7,14 @@
 <meta name="description" content="免费在线集装箱装柜计算工具：支持20GP/40GP/40HQ/45HQ柜型，输入纸箱尺寸即可自动算出理论装载量、装载率与托盘码盘方案，并生成3D装柜预览，支持Excel批量导入与方案导出。无需安装、无需注册，数据只在本地计算。" />
 <meta name="keywords" content="装柜计算,集装箱装柜计算工具,装柜大师,柜型容量计算,20GP,40GP,40HQ,45HQ,托盘码盘,托盘堆码计算,装箱软件,3D装柜模拟,集装箱内尺寸,装载率计算,装柜方案" />
 <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
-<meta name="author" content="装柜大师" />
+<meta name="author" content="星辰月光酿大树" />
 <meta name="application-name" content="装柜大师" />
 <meta name="theme-color" content="#2563eb" />
 <link rel="canonical" href="https://057300.xyz/loader-master/" />
 
 <!-- Open Graph：微信 / 微博 / Facebook 等分享卡片 -->
 <meta property="og:type" content="website" />
-<meta property="og:site_name" content="装柜大师" />
+<meta property="og:site_name" content="包装&amp;物流工具箱" />
 <meta property="og:locale" content="zh_CN" />
 <meta property="og:title" content="集装箱装柜计算工具_装柜大师 - 在线3D装柜模拟与柜型容量计算" />
 <meta property="og:description" content="输入纸箱尺寸即可算出20GP/40GP/40HQ/45HQ的理论装载量与托盘码盘方案，并生成3D装柜预览，支持Excel导入导出。" />
@@ -29,6 +29,11 @@
 <meta name="twitter:title" content="集装箱装柜计算工具_装柜大师" />
 <meta name="twitter:description" content="在线3D装柜模拟：自动计算柜型容量与托盘码盘方案，支持Excel导入导出。" />
 <meta name="twitter:image" content="https://057300.xyz/loader-master/og-cover.png" />
+
+<!-- GEO（生成式引擎优化）：为 AI 答案引擎补「时效」与「订阅」信号。
+     站点根已有 atom.xml，此处声明订阅源；og:updated_time 与页面可见的「最后更新」保持一致。 -->
+<link rel="alternate" type="application/atom+xml" title="包装&amp;物流工具箱 · Atom Feed" href="https://057300.xyz/atom.xml" />
+<meta property="og:updated_time" content="2026-10-29T13:00:00+08:00" />
 
 <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="./icon-512.png" />
@@ -78,6 +83,40 @@
   "@context": "https://schema.org",
   "@graph": [
     {
+      "@type": "Organization",
+      "@id": "https://057300.xyz/#organization",
+      "name": "包装&物流工具箱",
+      "alternateName": ["Packaging & Logistics Toolbox", "装柜大师"],
+      "url": "https://057300.xyz/",
+      "logo": {
+        "@type": "ImageObject",
+        "url": "https://057300.xyz/loader-master/icon-512.png",
+        "width": 512,
+        "height": 512
+      },
+      "founder": { "@type": "Person", "name": "星辰月光酿大树" },
+      "sameAs": ["https://github.com/bbb-pro"],
+      "description": "面向包装设计、电商物流与外贸跟单场景的免费在线工具集，包含刀模设计、集装箱装柜计算、条码标签设计与 Markdown 编辑器，全部为纯前端实现，数据不出浏览器。"
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://057300.xyz/loader-master/#website",
+      "url": "https://057300.xyz/loader-master/",
+      "name": "装柜大师 - 集装箱装柜计算工具",
+      "alternateName": "Loader Master",
+      "inLanguage": "zh-CN",
+      "publisher": { "@id": "https://057300.xyz/#organization" },
+      "isPartOf": { "@type": "WebSite", "name": "包装&物流工具箱", "url": "https://057300.xyz/" }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "@id": "https://057300.xyz/loader-master/#breadcrumb",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "包装&物流工具箱", "item": "https://057300.xyz/" },
+        { "@type": "ListItem", "position": 2, "name": "装柜大师", "item": "https://057300.xyz/loader-master/" }
+      ]
+    },
+    {
       "@type": "WebApplication",
       "@id": "https://057300.xyz/loader-master/#webapp",
       "name": "装柜大师 - 集装箱装柜计算工具",
@@ -103,7 +142,48 @@
         "price": "0",
         "priceCurrency": "CNY"
       },
-      "screenshot": "https://057300.xyz/loader-master/og-cover.png"
+      "screenshot": "https://057300.xyz/loader-master/og-cover.png",
+      "author": { "@type": "Person", "name": "星辰月光酿大树" },
+      "publisher": { "@id": "https://057300.xyz/#organization" },
+      "isPartOf": { "@id": "https://057300.xyz/loader-master/#website" },
+      "dateModified": "2026-10-29",
+      "keywords": "装柜计算,集装箱装柜计算,装箱算法,托盘码盘,20GP,40GP,40HQ,45HQ,装载率",
+      "audience": { "@type": "Audience", "audienceType": "外贸跟单、货代、电商物流、包装设计" },
+      "license": "https://creativecommons.org/licenses/by-nc-sa/4.0/"
+    },
+    {
+      "@type": "HowTo",
+      "@id": "https://057300.xyz/loader-master/#howto",
+      "name": "如何用装柜大师计算一个集装箱能装多少箱",
+      "description": "四步完成一次集装箱装柜计算：选择柜型、录入货物、按需勾选托盘、计算并导出方案。",
+      "totalTime": "PT3M",
+      "tool": [{ "@type": "HowToTool", "name": "装柜大师（浏览器内运行，无需安装）" }],
+      "step": [
+        {
+          "@type": "HowToStep",
+          "position": 1,
+          "name": "选择柜型",
+          "text": "下拉选择 20GP / 40GP / 40HQ / 45HQ，或选「自定义」手动填写柜内长宽高与最大承重。"
+        },
+        {
+          "@type": "HowToStep",
+          "position": 2,
+          "name": "录入货物",
+          "text": "填写纸箱长宽高、数量与单重；点「+ 添加」可录入多个 SKU，也可以用 Excel 模板批量导入。"
+        },
+        {
+          "@type": "HowToStep",
+          "position": 3,
+          "name": "按需勾选托盘",
+          "text": "打托出运的货物勾选「托盘」，填写托盘长宽、托盘高与每托箱数，工具会自动按交错码盘排布。"
+        },
+        {
+          "@type": "HowToStep",
+          "position": 4,
+          "name": "计算并导出",
+          "text": "点「开始计算」查看整柜数量、装载率与货物明细，中间区域是 3D 装柜预览，方案可导出为 Excel 或 PDF。"
+        }
+      ]
     },
     {
       "@type": "FAQPage",
@@ -253,7 +333,7 @@ s.parentNode.insertBefore(hm, s);
       <section id="summaryArea" class="hidden bg-white rounded-xl shadow p-4">
         <h2 class="font-semibold mb-2">4. 结果汇总</h2>
         <div id="summary" class="grid grid-cols-1 lg:grid-cols-2 gap-3 text-sm"></div>
-        <div id="warnings" class="mt-3 space-y-1 text-sm text-rose-600"></div>
+        <div id="warnings" class="mt-3 space-y-1 text-sm text-rose-600" role="alert" aria-live="polite"></div>
         <div id="tabs" class="flex flex-wrap gap-2 mt-3"></div>
       </section>
       <section id="detailArea" class="hidden bg-white rounded-xl shadow p-4">
@@ -372,6 +452,26 @@ s.parentNode.insertBefore(hm, s);
         <p class="text-sm text-slate-600">不需要。打开网页即可使用，也不用登录。页面依赖文件随站点一起加载，断网状态下同样可以完成计算。</p>
       </div>
     </div>
+  </div>
+
+  <div class="bg-white rounded-xl shadow p-5 mt-4">
+    <h2 class="text-lg font-bold mb-3">关于本站与作者</h2>
+    <p class="text-sm text-slate-600 mb-3">
+      「装柜大师」是「包装&amp;物流工具箱」中的集装箱装柜计算工具，由独立开发者「星辰月光酿大树」维护。
+      站点面向包装设计、电商物流与外贸跟单场景，所有工具均为纯前端实现，数据不出浏览器。
+      本页最后更新于 <time datetime="2026-10-29">2026 年 10 月 29 日</time>。
+    </p>
+    <ul class="text-sm text-slate-600 space-y-1 list-disc list-inside mb-3">
+      <li><a class="text-blue-600 hover:underline" href="https://057300.xyz/">包装&amp;物流工具箱 · 首页与全部工具</a></li>
+      <li><a class="text-blue-600 hover:underline" href="https://057300.xyz/about/">关于本站与作者（含联系方式）</a></li>
+      <li><a class="text-blue-600 hover:underline" href="https://057300.xyz/2026/08/27/%E8%A3%85%E6%9F%9C%E5%A4%A7%E5%B8%88-Loader-Master-%E9%9B%86%E8%A3%85%E7%AE%B1%E8%A3%85%E6%9F%9C%E8%AE%A1%E7%AE%97%E5%B7%A5%E5%85%B7%E4%BB%8B%E7%BB%8D/">装柜大师功能介绍：装箱算法与使用说明</a></li>
+      <li><a class="text-blue-600 hover:underline" href="https://057300.xyz/diecut/">同类工具：刀模设计 DieCut Designer</a></li>
+    </ul>
+    <p class="text-xs text-slate-400">
+      柜型尺寸依据 <a class="underline hover:text-slate-600" href="https://www.iso.org/standard/76912.html" target="_blank" rel="noopener">ISO 668:2020《系列1货运集装箱 — 分类、尺寸和额定质量》</a>，
+      集装箱箱号与尺寸代码可参考 <a class="underline hover:text-slate-600" href="https://www.bic-code.org/" target="_blank" rel="noopener">国际集装箱局 BIC</a>。
+      本工具取值为该标准下的常用内尺寸与载重，不同船公司、箱况会有差异，批量出货前请以订舱确认单为准。
+    </p>
   </div>
 </section>
 

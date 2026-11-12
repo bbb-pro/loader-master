@@ -1594,7 +1594,11 @@ function initThree() {
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(W, H, false);
   scene = new THREE.Scene(); scene.background = new THREE.Color(0xf1f5f9);
-  camera = new THREE.PerspectiveCamera(50, W/H, 1, 200000);
+  // ⚠️ near/far 跨度直接决定深度精度：原先 1 / 200000（20 万倍）时，
+  // 24 位深度缓冲在 5~15m 处精度只有 1~7mm，贴着箱面画的线条会整排整排被吞掉
+  //（表现就是「某些排的纸箱没有中缝」）。场景单位是 mm、最大对象 14m，
+  // 取 20 / 80000（4000 倍）即可把精度提高 20 倍，且 minDistance=50 仍大于 near。
+  camera = new THREE.PerspectiveCamera(50, W/H, 20, 80000);
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   // 滚轮按钮(中键)拖拽 = 平移(pan)，与「Ctrl+左键」同效果，便于不按键盘时拖动视角。
@@ -1607,9 +1611,10 @@ function initThree() {
   // 因此必须监听 change 事件主动标脏，不能只依赖 update() 的返回值。
   controls.addEventListener('change', () => { _sceneDirty = true; });
   // 缩放距离上下限：太近会穿过货物内部/切进相机 near 平面，太远会超出 far 平面导致整柜消失
-  //（两种情况都会被误认为"滚轮失灵"）。容器对角线约 14m，这里给到 150m 足够看全景。
+  //（两种情况都会被误认为"滚轮失灵"）。容器对角线约 14m，这里给到 40m 足够看全景；
+  // 上限必须明显小于 camera.far，否则推到最远时整柜会被远裁剪面吃掉。
   controls.minDistance = 50;
-  controls.maxDistance = 150000;
+  controls.maxDistance = 40000;
   raycaster = new THREE.Raycaster();
   // 屏蔽 canvas 右键菜单，避免与「右键平移」功能冲突
   canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -1629,7 +1634,7 @@ function initThree() {
 /* ============ 托盘纸箱分隔线（3D 视觉增强） ============ */
 // 托盘模式下，3D 原本把整托货画成一个色块，看不出「一摞纸箱」和箱子长宽方向。
 // 这里复用 buildItems 里同一份 palletLevelLayout 的每层坐标（有缓存），逐箱描出顶面矩形与竖棱；
-// 顶面再沿纸箱长边画一条「封箱胶带」中线，长宽方向一眼可辨。
+// 逐箱顶面再画一条「封箱胶带」中缝（沿该箱长边），长宽方向一眼可辨。
 // 所有线段合并进一个 BufferGeometry（每托仅 1 个 LineSegments），避免逐箱建 mesh 造成对象爆炸。
 function palletCartonLineSegments(it) {
   const g = goods.find(x => x.id === it.colorKey);
@@ -1641,21 +1646,25 @@ function palletCartonLineSegments(it) {
   const perLayer = lay.n;
   const total = Math.max(1, (+it.count) || 1);
   const layers = Math.max(1, Math.ceil(total / perLayer));
-  // packBrick 的 orientations 可能把托盘旋转 90°（L/W 互换）
+  // packBrick 的列位可能把托盘旋转 90°（L/W 互换）
   const eps = 1e-6;
   const rotated = Math.abs(it.L - pw) < eps && Math.abs(it.W - pl) < eps && Math.abs(pl - pw) > eps;
 
   const x0 = it.x, z0 = it.y;
   const yBase = it.z + (+it.palletH || 0);
   const yTop = yBase + it.goodsH;
+  // ⚠️ 线必须整体抬离箱面，否则与面共面 → z-fighting。
+  // 相机 near=1 / far=200000 时，24 位深度缓冲在 5~15m 处精度只有 1~7mm，
+  // 原来只抬 0.5mm 根本不够，会按「到相机的距离」整排整排地被吞掉（看起来就是「某排没中缝」）。
+  const LIFT = 2;
   const pts = [];
   const seg = (x1,y1,z1,x2,y2,z2) => pts.push(x1,y1,z1, x2,y2,z2);
   // 极端箱数（>1200 箱/托）只画层框，避免线段数量失控
   const dense = perLayer * layers <= 1200;
 
   for (let k = 0; k < layers; k++) {
-    const yb = yBase + k * bh;
-    const yt = Math.min(yb + bh, yTop);
+    const yb = yBase + k * bh + LIFT;
+    const yt = Math.min(yBase + (k + 1) * bh, yTop) + LIFT;
     const nThis = Math.min(perLayer, total - k * perLayer);
     if (nThis <= 0) break;
     // 该层 4 条外框竖棱 → 侧面能看出层与层的分界
@@ -1667,10 +1676,14 @@ function palletCartonLineSegments(it) {
     for (let ci = 0; ci < nThis; ci++) {
       const c = lay.coords[ci];
       if (!c) break;
-      // 托盘局部 (x,y) → 柜内 (长,宽)；托盘旋转 90° 时两者互换
+      // 托盘局部 (x,y) → 柜内 (长,宽)。
+      // 托盘被旋转 90° 时是「绕中心真旋转」，不是简单交换 x/y：
+      //   局部 x 轴 → 柜内 z 轴（保持正向），局部 y 轴 → 柜内 x 轴（反向）。
+      // 因此 x 分量必须按托盘短边翻转 pw - y - oW，否则整排箱线会平移出托盘，
+      // 表现为「这一排顶部完全看不到分隔线」。
       let bx, bz, cl, cw;
-      if (!rotated) { bx = x0 + c.x; bz = z0 + c.y; cl = c.oL; cw = c.oW; }
-      else          { bx = x0 + c.y; bz = z0 + c.x; cl = c.oW; cw = c.oL; }
+      if (!rotated) { bx = x0 + c.x;                 bz = z0 + c.y; cl = c.oL; cw = c.oW; }
+      else          { bx = x0 + (pw - c.y - c.oW);   bz = z0 + c.x; cl = c.oW; cw = c.oL; }
       // 顶面矩形
       seg(bx, yt, bz,           bx + cl, yt, bz);
       seg(bx + cl, yt, bz,      bx + cl, yt, bz + cw);
@@ -1681,21 +1694,17 @@ function palletCartonLineSegments(it) {
       seg(bx + cl, yb, bz,      bx + cl, yt, bz);
       seg(bx, yb, bz + cw,      bx, yt, bz + cw);
       seg(bx + cl, yb, bz + cw, bx + cl, yt, bz + cw);
+      // 每个纸箱顶面一条「封箱胶带」中缝，沿该箱长边方向 —— 逐箱可见，不再整托一条。
+      if (cl >= cw) seg(bx, yt, bz + cw / 2, bx + cl, yt, bz + cw / 2);
+      else          seg(bx + cl / 2, yt, bz, bx + cl / 2, yt, bz + cw);
     }
   }
-
-  // 顶面「封箱胶带」：沿纸箱长边方向画一条中线（长边方向按第一个箱子的朝向判定）
-  const c0 = lay.coords[0];
-  const alongX = rotated ? (c0.oW >= c0.oL) : (c0.oL >= c0.oW);
-  const ty = yTop + 0.5;  // 轻微抬高，避免与顶面共面产生 z-fighting
-  if (alongX) seg(x0, ty, z0 + it.W / 2, x0 + it.L, ty, z0 + it.W / 2);
-  else        seg(x0 + it.L / 2, ty, z0, x0 + it.L / 2, ty, z0 + it.W);
 
   if (!pts.length) return null;
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
   return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
-    color: 0x1e293b, transparent: true, opacity: 0.5,
+    color: 0x1e293b, transparent: true, opacity: 0.75, depthWrite: false,
   }));
 }
 

@@ -1633,9 +1633,14 @@ function initThree() {
 }
 /* ============ 托盘纸箱分隔线（3D 视觉增强） ============ */
 // 托盘模式下，3D 原本把整托货画成一个色块，看不出「一摞纸箱」和箱子长宽方向。
-// 这里复用 buildItems 里同一份 palletLevelLayout 的每层坐标（有缓存），逐箱描出顶面矩形与竖棱；
+// 这里复用 buildItems 里同一份 palletLevelLayout 的每层坐标（有缓存），逐箱描出顶面外框与竖棱；
 // 逐箱顶面再画一条「封箱胶带」中缝（沿该箱长边），长宽方向一眼可辨。
-// 所有线段合并进一个 BufferGeometry（每托仅 1 个 LineSegments），避免逐箱建 mesh 造成对象爆炸。
+// 两类线刻意做成不同观感，一眼可分：
+//   · 外框（箱轮廓 / 竖棱）→ 深色薄片面，**真有厚度**；
+//   · 中缝（封箱胶带）    → 浅色虚线线段，细、淡。
+// 原因：WebGL 的 LineBasicMaterial.linewidth 在 ANGLE(D3D) 后端恒被忽略，画出来永远 1px，
+// 光调大 linewidth 没用，所以粗线只能用「薄片面（三角形）」拼。
+// 每托只产生 2 个对象（1 个 Mesh + 1 个 LineSegments），避免逐箱建 mesh 造成对象爆炸。
 function palletCartonLineSegments(it) {
   const g = goods.find(x => x.id === it.colorKey);
   if (!g || !g.isPallet) return null;
@@ -1654,12 +1659,28 @@ function palletCartonLineSegments(it) {
   const yBase = it.z + (+it.palletH || 0);
   const yTop = yBase + it.goodsH;
   // ⚠️ 线必须整体抬离箱面，否则与面共面 → z-fighting。
-  // 相机 near=1 / far=200000 时，24 位深度缓冲在 5~15m 处精度只有 1~7mm，
-  // 原来只抬 0.5mm 根本不够，会按「到相机的距离」整排整排地被吞掉（看起来就是「某排没中缝」）。
+  // 相机 near=20 / far=80000 时，24 位深度缓冲在 5~15m 处精度约 1~7mm，
+  // 抬少了会按「到相机的距离」整排整排地被吞掉（看起来就是「某排没中缝」）；2mm 已实测够用。
   const LIFT = 2;
-  const pts = [];
-  const seg = (x1,y1,z1,x2,y2,z2) => pts.push(x1,y1,z1, x2,y2,z2);
-  // 极端箱数（>1200 箱/托）只画层框，避免线段数量失控
+  // 外框线宽（mm）。太小在缩远时掉到亚像素、看起来比 1px 还淡；按箱体尺寸自适应并夹在 8~22mm。
+  const EW = Math.max(8, Math.min(22, Math.min(bl, bw) * 0.045));
+  const epts = [];   // 外框（粗）：薄片三角形
+  const spts = [];   // 中缝（细）：虚线线段
+  // 一个四边形 → 2 个三角形
+  const quad = (ax,ay,az, bx,by,bz, cx,cy,cz, dx,dy,dz) => {
+    epts.push(ax,ay,az, bx,by,bz, cx,cy,cz,  ax,ay,az, cx,cy,cz, dx,dy,dz);
+  };
+  // 顶面水平边：沿 x 延伸，沿 z 撑开宽度
+  const eX = (xa, xb, y, zc, w) => quad(xa,y,zc-w/2, xb,y,zc-w/2, xb,y,zc+w/2, xa,y,zc+w/2);
+  // 顶面水平边：沿 z 延伸，沿 x 撑开宽度
+  const eZ = (za, zb, y, xc, w) => quad(xc-w/2,y,za, xc-w/2,y,zb, xc+w/2,y,zb, xc+w/2,y,za);
+  // 竖棱：十字双片，任意视角都不会退化成一条缝
+  const eY = (x, ya, yb2, z, w) => {
+    quad(x-w/2,ya,z, x-w/2,yb2,z, x+w/2,yb2,z, x+w/2,ya,z);
+    quad(x,ya,z-w/2, x,yb2,z-w/2, x,yb2,z+w/2, x,ya,z+w/2);
+  };
+  const seg = (x1,y1,z1,x2,y2,z2) => spts.push(x1,y1,z1, x2,y2,z2);
+  // 极端箱数（>1200 箱/托）只画层框，避免几何量失控
   const dense = perLayer * layers <= 1200;
 
   for (let k = 0; k < layers; k++) {
@@ -1668,10 +1689,10 @@ function palletCartonLineSegments(it) {
     const nThis = Math.min(perLayer, total - k * perLayer);
     if (nThis <= 0) break;
     // 该层 4 条外框竖棱 → 侧面能看出层与层的分界
-    seg(x0, yb, z0,               x0, yt, z0);
-    seg(x0 + it.L, yb, z0,        x0 + it.L, yt, z0);
-    seg(x0, yb, z0 + it.W,        x0, yt, z0 + it.W);
-    seg(x0 + it.L, yb, z0 + it.W, x0 + it.L, yt, z0 + it.W);
+    eY(x0, yb, yt, z0, EW);
+    eY(x0 + it.L, yb, yt, z0, EW);
+    eY(x0, yb, yt, z0 + it.W, EW);
+    eY(x0 + it.L, yb, yt, z0 + it.W, EW);
     if (!dense) continue;
     for (let ci = 0; ci < nThis; ci++) {
       const c = lay.coords[ci];
@@ -1684,28 +1705,42 @@ function palletCartonLineSegments(it) {
       let bx, bz, cl, cw;
       if (!rotated) { bx = x0 + c.x;                 bz = z0 + c.y; cl = c.oL; cw = c.oW; }
       else          { bx = x0 + (pw - c.y - c.oW);   bz = z0 + c.x; cl = c.oW; cw = c.oL; }
-      // 顶面矩形
-      seg(bx, yt, bz,           bx + cl, yt, bz);
-      seg(bx + cl, yt, bz,      bx + cl, yt, bz + cw);
-      seg(bx + cl, yt, bz + cw, bx, yt, bz + cw);
-      seg(bx, yt, bz + cw,      bx, yt, bz);
+      // 顶面外框：粗边。上下两条拉通到角上，左右两条只走中间一段，避免四角反复叠色变黑。
+      eX(bx - EW/2, bx + cl + EW/2, yt, bz, EW);
+      eX(bx - EW/2, bx + cl + EW/2, yt, bz + cw, EW);
+      const za = bz + EW/2, zb2 = bz + cw - EW/2;
+      if (zb2 > za) { eZ(za, zb2, yt, bx, EW); eZ(za, zb2, yt, bx + cl, EW); }
       // 4 条竖棱 → 同层相邻箱之间有竖缝，更像纸箱
-      seg(bx, yb, bz,           bx, yt, bz);
-      seg(bx + cl, yb, bz,      bx + cl, yt, bz);
-      seg(bx, yb, bz + cw,      bx, yt, bz + cw);
-      seg(bx + cl, yb, bz + cw, bx + cl, yt, bz + cw);
-      // 每个纸箱顶面一条「封箱胶带」中缝，沿该箱长边方向 —— 逐箱可见，不再整托一条。
+      eY(bx, yb, yt, bz, EW);
+      eY(bx + cl, yb, yt, bz, EW);
+      eY(bx, yb, yt, bz + cw, EW);
+      eY(bx + cl, yb, yt, bz + cw, EW);
+      // 每个纸箱顶面一条「封箱胶带」中缝，沿该箱长边方向。
+      // 刻意比外框更细、更浅、还是虚线 —— 和外框一眼就能分开。
       if (cl >= cw) seg(bx, yt, bz + cw / 2, bx + cl, yt, bz + cw / 2);
       else          seg(bx + cl / 2, yt, bz, bx + cl / 2, yt, bz + cw);
     }
   }
 
-  if (!pts.length) return null;
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-  return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
-    color: 0x1e293b, transparent: true, opacity: 0.75, depthWrite: false,
-  }));
+  if (!epts.length && !spts.length) return null;
+  const grp = new THREE.Group();
+  if (epts.length) {
+    const eg = new THREE.BufferGeometry();
+    eg.setAttribute('position', new THREE.Float32BufferAttribute(epts, 3));
+    grp.add(new THREE.Mesh(eg, new THREE.MeshBasicMaterial({
+      color: 0x1e293b, transparent: true, opacity: 0.92, depthWrite: false, side: THREE.DoubleSide,
+    })));
+  }
+  if (spts.length) {
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.Float32BufferAttribute(spts, 3));
+    const seam = new THREE.LineSegments(sg, new THREE.LineDashedMaterial({
+      color: 0x64748b, transparent: true, opacity: 0.6, depthWrite: false, dashSize: 90, gapSize: 70,
+    }));
+    seam.computeLineDistances();   // 虚线必须算，否则渲染成实线
+    grp.add(seam);
+  }
+  return grp;
 }
 
 function render3D(ci, selColor=0xfbbf24) {
